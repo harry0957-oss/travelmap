@@ -71,6 +71,17 @@ main {
   align-items: flex-end;
 }
 
+.field.button-row {
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.field.button-row button {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
 .field label {
   display: flex;
   flex-direction: column;
@@ -119,6 +130,22 @@ button:focus {
 
 button.secondary {
   background: rgba(129, 216, 142, 0.85);
+}
+
+button.secondary.outline {
+  background: transparent;
+  color: #8cdcb2;
+  border: 1px solid rgba(140, 220, 178, 0.8);
+}
+
+button.secondary.outline.active {
+  background: rgba(140, 220, 178, 0.18);
+  box-shadow: 0 0 0 2px rgba(140, 220, 178, 0.25);
+}
+
+button.secondary.subtle {
+  background: rgba(120, 165, 220, 0.35);
+  color: #f5fbff;
 }
 
 button.add {
@@ -186,6 +213,17 @@ button.remove {
 
 #waypointTable tbody tr:hover {
   background: rgba(83, 169, 255, 0.1);
+}
+
+#waypointTable td.country {
+  white-space: nowrap;
+}
+
+.draw-mode-hint {
+  font-size: 0.8rem;
+  opacity: 0.75;
+  margin-top: 0.5rem;
+  text-align: center;
 }
 
 .status {

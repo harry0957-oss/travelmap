@@ -87,6 +87,13 @@ const state = {
   projectedWaypoints: [],
   bounds: null,
   heading: 0,
+  cities: [],
+  cityLookup: new Map(),
+  mapImage: null,
+  drawnRoute: [],
+  activeStroke: null,
+  drawMode: false,
+  pointerDrawing: false,
 };
 
 const canvas = document.getElementById("mapCanvas");
@@ -97,15 +104,140 @@ const waypointTableBody = document.querySelector("#waypointTable tbody");
 const waypointRowTemplate = document.getElementById("waypointRowTemplate");
 const statusEl = document.getElementById("status");
 const downloadPreview = document.getElementById("downloadPreview");
+const drawModeHint = document.getElementById("drawModeHint");
 
 const titleInput = document.getElementById("titleInput");
 const speedInput = document.getElementById("speedInput");
 const frameRateInput = document.getElementById("frameRateInput");
 const startPauseInput = document.getElementById("startPauseInput");
 const endPauseInput = document.getElementById("endPauseInput");
+const cityInput = document.getElementById("cityInput");
+const cityOptions = document.getElementById("cityOptions");
+const waypointPauseInput = document.getElementById("waypointPause");
+const mapUploadInput = document.getElementById("mapUpload");
+const resetMapButton = document.getElementById("resetMapButton");
+const toggleDrawRouteButton = document.getElementById("toggleDrawRoute");
+const clearRouteButton = document.getElementById("clearRouteButton");
 
 const previewButton = document.getElementById("previewButton");
 const downloadButton = document.getElementById("downloadButton");
+
+const CITY_DATA_PATH = "data/cities.csv";
+let cityCatalogueLoaded = false;
+
+function normaliseCityKey(value) {
+  return (value ?? "")
+    .toString()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*,\s*/g, ",")
+    .trim();
+}
+
+async function loadCityCatalogue() {
+  try {
+    const response = await fetch(CITY_DATA_PATH);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const text = await response.text();
+    const cities = parseCityCsv(text);
+    state.cities = cities;
+    rebuildCityLookup();
+    populateCityOptions();
+    cityCatalogueLoaded = true;
+    refreshWaypointCityMetadata();
+    drawStaticMap();
+  } catch (error) {
+    console.warn("Unable to load city catalogue", error);
+    setStatus("The city CSV could not be loaded. Manual entry will be limited.", "warning");
+  }
+}
+
+function parseCityCsv(text) {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const header = lines.shift();
+  const columns = header.split(",").map((h) => h.trim().toLowerCase());
+  const nameIndex = columns.indexOf("name");
+  const countryIndex = columns.indexOf("country");
+  const latIndex = columns.indexOf("latitude");
+  const lonIndex = columns.indexOf("longitude");
+  const populationIndex = columns.indexOf("population");
+  const majorIndex = columns.findIndex((col) => col === "is_major" || col === "major");
+  return lines
+    .map((line) => line.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).map((value) => value.replace(/^\"|\"$/g, "").trim()))
+    .map((fields) => ({
+      name: fields[nameIndex] || "",
+      country: fields[countryIndex] || "",
+      latitude: Number.parseFloat(fields[latIndex]),
+      longitude: Number.parseFloat(fields[lonIndex]),
+      population: Number.parseInt(fields[populationIndex] || "0", 10) || 0,
+      isMajor: (fields[majorIndex] || "0").toLowerCase() === "1" ||
+        (fields[majorIndex] || "false").toLowerCase() === "true",
+    }))
+    .filter((city) => Number.isFinite(city.latitude) && Number.isFinite(city.longitude));
+}
+
+function rebuildCityLookup() {
+  state.cityLookup.clear();
+  state.cities.forEach((city) => {
+    const display = `${city.name}, ${city.country}`;
+    const keys = new Set([
+      display,
+      `${city.name},${city.country}`,
+      city.name,
+      `${city.name} ${city.country}`,
+    ]);
+    keys.forEach((value) => {
+      state.cityLookup.set(normaliseCityKey(value), city);
+    });
+  });
+}
+
+function populateCityOptions() {
+  if (!cityOptions) return;
+  cityOptions.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  state.cities.forEach((city) => {
+    const option = document.createElement("option");
+    option.value = `${city.name}, ${city.country}`;
+    option.dataset.population = city.population;
+    fragment.appendChild(option);
+  });
+  cityOptions.appendChild(fragment);
+}
+
+function findCity(entry) {
+  const key = normaliseCityKey(entry);
+  if (!key) return null;
+  if (state.cityLookup.has(key)) {
+    return state.cityLookup.get(key);
+  }
+  const [namePart] = key.split(",");
+  if (state.cityLookup.has(namePart)) {
+    return state.cityLookup.get(namePart);
+  }
+  return state.cities.find((city) => normaliseCityKey(city.name) === namePart) || null;
+}
+
+function refreshWaypointCityMetadata() {
+  if (!state.cities.length) return;
+  let updated = false;
+  state.waypoints = state.waypoints.map((wp) => {
+    if (wp.city) return wp;
+    const match = matchCityByData(wp.name, wp.lat, wp.lon);
+    if (match) {
+      updated = true;
+      return { ...wp, name: match.name, city: match };
+    }
+    return wp;
+  });
+  if (updated) {
+    renderWaypointTable();
+    drawStaticMap();
+  }
+}
 
 function setStatus(text, type = "info") {
   statusEl.textContent = text;
@@ -144,6 +276,7 @@ function renderWaypointTable() {
     const row = waypointRowTemplate.content.firstElementChild.cloneNode(true);
     row.querySelector(".index").textContent = String(index + 1);
     row.querySelector(".name").textContent = wp.name || "(untitled)";
+    row.querySelector(".country").textContent = wp.city?.country || "";
     row.querySelector(".lat").textContent = Number(wp.lat).toFixed(4);
     row.querySelector(".lon").textContent = Number(wp.lon).toFixed(4);
     row.querySelector(".pause").textContent = Number(wp.pause || 0).toFixed(1);
@@ -158,23 +291,184 @@ function renderWaypointTable() {
 
 function handleWaypointSubmit(event) {
   event.preventDefault();
-  const name = document.getElementById("waypointName").value.trim();
-  const lat = parseFloat(document.getElementById("waypointLat").value);
-  const lon = parseFloat(document.getElementById("waypointLon").value);
-  const pause = parseFloat(document.getElementById("waypointPause").value || "0");
-  if (Number.isNaN(lat) || Number.isNaN(lon)) {
-    setStatus("Latitude and longitude must be valid numbers.", "error");
+  const entry = cityInput.value.trim();
+  if (!entry) {
+    setStatus("Choose a city or town from the list.", "warning");
     return;
   }
-  state.waypoints.push({ name, lat, lon, pause });
+  if (!cityCatalogueLoaded && !state.cities.length) {
+    setStatus("City catalogue is still loading. Please try again in a moment.", "warning");
+    return;
+  }
+  const city = findCity(entry);
+  if (!city) {
+    setStatus("That city is not in the CSV catalogue. Please choose a listed option.", "error");
+    return;
+  }
+  const pause = Math.max(parseFloat(waypointPauseInput.value || "0"), 0);
+  state.waypoints.push({
+    name: city.name,
+    lat: city.latitude,
+    lon: city.longitude,
+    pause,
+    city,
+  });
   event.target.reset();
-  document.getElementById("waypointPause").value = "1";
+  waypointPauseInput.value = "1";
+  cityInput.focus();
   renderWaypointTable();
   drawStaticMap();
   setStatus("Waypoints updated.");
 }
 
 document.getElementById("waypointForm").addEventListener("submit", handleWaypointSubmit);
+
+mapUploadInput.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      state.mapImage = img;
+      mapUploadInput.value = "";
+      setStatus(`Loaded custom map: ${file.name}`);
+      drawStaticMap();
+    };
+    img.onerror = () => {
+      mapUploadInput.value = "";
+      setStatus("Unable to read the selected map file.", "error");
+    };
+    img.src = reader.result;
+  };
+  reader.onerror = () => {
+    mapUploadInput.value = "";
+    setStatus("Unable to read the selected map file.", "error");
+  };
+  reader.readAsDataURL(file);
+});
+
+resetMapButton.addEventListener("click", () => {
+  state.mapImage = null;
+  mapUploadInput.value = "";
+  setStatus("Reverted to the default world map.");
+  drawStaticMap();
+});
+
+toggleDrawRouteButton.addEventListener("click", () => {
+  state.drawMode = !state.drawMode;
+  if (!state.drawMode) {
+    state.pointerDrawing = false;
+    state.activeStroke = null;
+  }
+  updateDrawModeUI();
+});
+
+clearRouteButton.addEventListener("click", () => {
+  state.drawnRoute = [];
+  state.activeStroke = null;
+  drawStaticMap();
+  setStatus("Cleared the hand-drawn route overlay.");
+  updateDrawModeUI();
+});
+
+canvas.addEventListener("pointerdown", (event) => {
+  if (!state.drawMode || state.animation) return;
+  event.preventDefault();
+  const point = pointerToLatLon(event);
+  if (!point) return;
+  const stroke = [point];
+  state.drawnRoute.push(stroke);
+  state.activeStroke = stroke;
+  state.pointerDrawing = true;
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch (error) {
+    // Pointer capture may not be supported; ignore.
+  }
+  drawStaticMap();
+  updateDrawModeUI();
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!state.drawMode || !state.pointerDrawing || !state.activeStroke) return;
+  event.preventDefault();
+  const point = pointerToLatLon(event);
+  if (!point) return;
+  const bounds = state.bounds || computeBounds();
+  const last = state.activeStroke[state.activeStroke.length - 1];
+  const lastProjected = project(last.lat, last.lon, bounds);
+  const currentProjected = project(point.lat, point.lon, bounds);
+  const dx = currentProjected.x - lastProjected.x;
+  const dy = currentProjected.y - lastProjected.y;
+  if (dx * dx + dy * dy < 9) {
+    return;
+  }
+  state.activeStroke.push(point);
+  drawStaticMap();
+});
+
+function endRouteDrawing(pointerId) {
+  if (!state.pointerDrawing) return;
+  if (state.activeStroke && state.activeStroke.length < 2) {
+    state.drawnRoute.pop();
+  }
+  state.pointerDrawing = false;
+  state.activeStroke = null;
+  if (typeof pointerId === "number") {
+    try {
+      canvas.releasePointerCapture(pointerId);
+    } catch (error) {
+      // Ignore release errors.
+    }
+  }
+  drawStaticMap();
+  updateDrawModeUI();
+}
+
+canvas.addEventListener("pointerup", (event) => {
+  if (!state.drawMode) return;
+  event.preventDefault();
+  endRouteDrawing(event.pointerId);
+});
+
+canvas.addEventListener("pointercancel", (event) => {
+  if (!state.drawMode) return;
+  event.preventDefault();
+  endRouteDrawing(event.pointerId);
+});
+
+canvas.addEventListener("dblclick", () => {
+  if (!state.drawMode) return;
+  if (state.pointerDrawing) {
+    endRouteDrawing();
+  }
+  state.drawMode = false;
+  state.pointerDrawing = false;
+  state.activeStroke = null;
+  updateDrawModeUI();
+});
+
+function pointerToLatLon(event) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const x = (event.clientX - rect.left) * scaleX;
+  const y = (event.clientY - rect.top) * scaleY;
+  const bounds = state.bounds || computeBounds();
+  return unproject(x, y, bounds);
+}
+
+function updateDrawModeUI() {
+  toggleDrawRouteButton.textContent = state.drawMode
+    ? "Stop drawing route"
+    : "Start drawing route";
+  toggleDrawRouteButton.classList.toggle("active", state.drawMode);
+  drawModeHint.hidden = !state.drawMode;
+  clearRouteButton.disabled = state.drawnRoute.length === 0 && !state.activeStroke;
+  clearRouteButton.classList.toggle("disabled", clearRouteButton.disabled);
+  canvas.style.cursor = state.drawMode ? "crosshair" : "";
+}
 
 document.getElementById("configUpload").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
@@ -227,16 +521,52 @@ function applyConfiguration(config) {
     tryLoadIcon(config.vehicle.icon);
   }
 
-  state.waypoints = Array.isArray(config.waypoints)
-    ? config.waypoints.map((wp) => ({
-        name: wp.name || "",
-        lat: parseFloat(wp.lat),
-        lon: parseFloat(wp.lon),
-        pause: parseFloat(wp.pause || 0),
-      }))
+  state.drawnRoute = Array.isArray(config.drawn_route)
+    ? config.drawn_route
+        .map((stroke) =>
+          Array.isArray(stroke)
+            ? stroke
+                .map((point) => ({
+                  lat: Number.parseFloat(point.lat ?? point[0]),
+                  lon: Number.parseFloat(point.lon ?? point[1]),
+                }))
+                .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon))
+            : []
+        )
+        .filter((stroke) => stroke.length > 1)
     : [];
+  state.drawMode = false;
+  state.pointerDrawing = false;
+  state.activeStroke = null;
+
+  state.waypoints = Array.isArray(config.waypoints)
+    ? config.waypoints
+        .map(prepareWaypoint)
+        .filter((wp) => Number.isFinite(wp.lat) && Number.isFinite(wp.lon))
+    : [];
+  refreshWaypointCityMetadata();
+  updateDrawModeUI();
   renderWaypointTable();
   drawStaticMap();
+}
+
+function prepareWaypoint(raw) {
+  const lat = Number.parseFloat(raw.lat ?? raw.latitude);
+  const lon = Number.parseFloat(raw.lon ?? raw.longitude);
+  const pause = Math.max(Number.parseFloat(raw.pause || 0) || 0, 0);
+  const providedName = (raw.name || raw.city || "").toString().trim();
+  const match = matchCityByData(providedName, lat, lon);
+  const name = match?.name || providedName;
+  const waypoint = {
+    name,
+    lat,
+    lon,
+    pause,
+  };
+  if (match) {
+    waypoint.city = match;
+  }
+  return waypoint;
 }
 
 async function tryLoadIcon(path) {
@@ -264,7 +594,20 @@ async function tryLoadIcon(path) {
 }
 
 function computeBounds(marginDegrees = 6) {
-  if (!state.waypoints.length) {
+  const coordinates = [];
+  state.waypoints.forEach((wp) => {
+    if (Number.isFinite(wp.lat) && Number.isFinite(wp.lon)) {
+      coordinates.push({ lat: wp.lat, lon: wp.lon });
+    }
+  });
+  state.drawnRoute.forEach((stroke) => {
+    stroke.forEach((point) => {
+      if (Number.isFinite(point.lat) && Number.isFinite(point.lon)) {
+        coordinates.push(point);
+      }
+    });
+  });
+  if (!coordinates.length) {
     return {
       minLat: -60,
       maxLat: 80,
@@ -276,14 +619,11 @@ function computeBounds(marginDegrees = 6) {
   let maxLat = -Infinity;
   let minLon = Infinity;
   let maxLon = -Infinity;
-  state.waypoints.forEach((wp) => {
-    if (!Number.isFinite(wp.lat) || !Number.isFinite(wp.lon)) {
-      return;
-    }
-    minLat = Math.min(minLat, wp.lat);
-    maxLat = Math.max(maxLat, wp.lat);
-    minLon = Math.min(minLon, wp.lon);
-    maxLon = Math.max(maxLon, wp.lon);
+  coordinates.forEach((coord) => {
+    minLat = Math.min(minLat, coord.lat);
+    maxLat = Math.max(maxLat, coord.lat);
+    minLon = Math.min(minLon, coord.lon);
+    maxLon = Math.max(maxLon, coord.lon);
   });
   return {
     minLat: minLat - marginDegrees,
@@ -302,16 +642,40 @@ function project(lat, lon, bounds) {
   return { x, y };
 }
 
-function drawStaticMap() {
-  const bounds = computeBounds();
-  state.bounds = bounds;
+function unproject(x, y, bounds) {
+  const { minLat, maxLat, minLon, maxLon } = bounds;
+  const lonRange = Math.max(maxLon - minLon, 0.0001);
+  const latRange = Math.max(maxLat - minLat, 0.0001);
+  const lon = minLon + (x / canvas.width) * lonRange;
+  const lat = maxLat - (y / canvas.height) * latRange;
+  return { lat, lon };
+}
+
+function drawBaseLayers(bounds) {
+  const activeBounds = bounds || computeBounds();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawBackgroundGradient();
+  if (state.mapImage) {
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    ctx.drawImage(state.mapImage, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  } else {
+    drawDefaultContinents(activeBounds);
+  }
+  drawMajorCities(activeBounds);
+  drawDrawnRoute(activeBounds);
+}
+
+function drawBackgroundGradient() {
   const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
   gradient.addColorStop(0, "#021224");
   gradient.addColorStop(1, "#031a2f");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
 
+function drawDefaultContinents(bounds) {
   ctx.save();
   ctx.globalAlpha = 0.6;
   ctx.fillStyle = "#142d47";
@@ -326,8 +690,63 @@ function drawStaticMap() {
     ctx.fill();
   });
   ctx.restore();
+}
 
-  if (!state.waypoints.length) return;
+function drawMajorCities(bounds) {
+  if (!state.cities.length) return;
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
+  state.cities.forEach((city) => {
+    if (!city.isMajor) return;
+    const { x, y } = project(city.latitude, city.longitude, bounds);
+    if (x < -20 || y < -20 || x > canvas.width + 20 || y > canvas.height + 20) return;
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawDrawnRoute(bounds) {
+  if (!state.drawnRoute.length) return;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 184, 77, 0.8)";
+  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  state.drawnRoute.forEach((stroke) => {
+    if (stroke.length < 2) return;
+    ctx.beginPath();
+    stroke.forEach((point, index) => {
+      const { x, y } = project(point.lat, point.lon, bounds);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawTitleOverlay() {
+  const title = titleInput.value || "";
+  if (!title) return;
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.font = "600 24px 'Inter', system-ui";
+  ctx.textAlign = "left";
+  ctx.fillText(title, 24, 36);
+  ctx.restore();
+}
+
+function drawStaticMap() {
+  const bounds = computeBounds();
+  state.bounds = bounds;
+  drawBaseLayers(bounds);
+
+  if (!state.waypoints.length) {
+    drawTitleOverlay();
+    return;
+  }
 
   state.projectedWaypoints = state.waypoints.map((wp) => ({
     ...wp,
@@ -344,20 +763,27 @@ function drawStaticMap() {
   });
   ctx.stroke();
 
-  ctx.fillStyle = "#8fd3ff";
   ctx.strokeStyle = "rgba(12, 42, 70, 0.7)";
   ctx.lineWidth = 2;
   state.projectedWaypoints.forEach((pt) => {
+    const radius = pt.city?.isMajor ? 8 : 6;
+    ctx.fillStyle = pt.city?.isMajor ? "#ffdd85" : "#8fd3ff";
     ctx.beginPath();
-    ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    if (pt.city?.isMajor) {
+      ctx.save();
+      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      ctx.font = "600 14px 'Inter', system-ui";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(pt.name, pt.x + 10, pt.y - 8);
+      ctx.restore();
+    }
   });
 
-  ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-  ctx.font = "600 20px 'Inter', system-ui";
-  ctx.textAlign = "left";
-  ctx.fillText(titleInput.value || "", 24, 36);
+  drawTitleOverlay();
 }
 
 function haversineDistance(a, b) {
@@ -378,6 +804,33 @@ function haversineDistance(a, b) {
 
 function toRadians(deg) {
   return (deg * Math.PI) / 180;
+}
+
+function matchCityByData(name, lat, lon) {
+  if (!state.cities.length) return null;
+  const normalisedName = normaliseCityKey(name || "");
+  if (normalisedName && state.cityLookup.has(normalisedName)) {
+    return state.cityLookup.get(normalisedName);
+  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return null;
+  }
+  let closest = null;
+  let minDistance = Infinity;
+  state.cities.forEach((city) => {
+    const distance = haversineDistance(
+      { lat, lon },
+      { lat: city.latitude, lon: city.longitude }
+    );
+    if (distance < minDistance) {
+      minDistance = distance;
+      closest = city;
+    }
+  });
+  if (closest && minDistance <= 75) {
+    return closest;
+  }
+  return null;
 }
 
 function buildTimeline() {
@@ -545,6 +998,7 @@ function runAnimation(record = false) {
   function finish() {
     animation.finished = true;
     disableControls(false);
+    updateDrawModeUI();
     setStatus(record ? "Finishing recording..." : "Preview finished.");
     if (record && recorder) {
       recorder.stop();
@@ -559,27 +1013,7 @@ function runAnimation(record = false) {
 }
 
 function drawFrame(segments, elapsed) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, "#021224");
-  gradient.addColorStop(1, "#031a2f");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.save();
-  ctx.globalAlpha = 0.6;
-  ctx.fillStyle = "#142d47";
-  Object.values(CONTINENT_SHAPES).forEach((shape) => {
-    ctx.beginPath();
-    shape.forEach(([lat, lon], index) => {
-      const { x, y } = project(lat, lon, state.bounds);
-      if (index === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.closePath();
-    ctx.fill();
-  });
-  ctx.restore();
+  drawBaseLayers(state.bounds);
 
   ctx.strokeStyle = "rgba(143, 211, 255, 0.2)";
   ctx.lineWidth = 4;
@@ -603,14 +1037,24 @@ function drawFrame(segments, elapsed) {
     ctx.stroke();
   }
 
-  ctx.fillStyle = "#8fd3ff";
   ctx.strokeStyle = "rgba(12, 42, 70, 0.7)";
   ctx.lineWidth = 2;
   state.projectedWaypoints.forEach((pt) => {
+    const radius = pt.city?.isMajor ? 8 : 6;
+    ctx.fillStyle = pt.city?.isMajor ? "#ffdd85" : "#8fd3ff";
     ctx.beginPath();
-    ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    if (pt.city?.isMajor) {
+      ctx.save();
+      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      ctx.font = "600 14px 'Inter', system-ui";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(pt.name, pt.x + 10, pt.y - 8);
+      ctx.restore();
+    }
   });
 
   const active = currentSegmentAt(segments, elapsed);
@@ -620,10 +1064,7 @@ function drawFrame(segments, elapsed) {
   drawVehicle(vehicle.position, vehicle.heading);
   drawUpcomingLine(vehicle.position, active);
 
-  ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-  ctx.font = "600 24px 'Inter', system-ui";
-  ctx.textAlign = "left";
-  ctx.fillText(titleInput.value || "", 24, 36);
+  drawTitleOverlay();
 }
 
 function drawVehicle(position, heading) {
@@ -752,10 +1193,15 @@ function findNextMove(segment) {
 }
 
 function disableControls(disabled) {
-  [previewButton, downloadButton].forEach((button) => {
-    button.disabled = disabled;
-    button.classList.toggle("disabled", disabled);
-  });
+  [previewButton, downloadButton, toggleDrawRouteButton, clearRouteButton, resetMapButton].forEach(
+    (button) => {
+      button.disabled = disabled;
+      button.classList.toggle("disabled", disabled);
+    }
+  );
+  mapUploadInput.disabled = disabled;
+  cityInput.disabled = disabled;
+  waypointPauseInput.disabled = disabled;
 }
 
 previewButton.addEventListener("click", () => {
@@ -770,4 +1216,6 @@ downloadButton.addEventListener("click", () => {
 
 renderIconPreview();
 drawStaticMap();
+updateDrawModeUI();
 setStatus("Load a configuration or start adding waypoints.");
+loadCityCatalogue();
