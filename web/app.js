@@ -269,6 +269,54 @@ async function openRecorderPopup(routePayload) {
         }
       }
 
+      function buildRouteSegments(path) {
+        if (!Array.isArray(path)) return [];
+        const segments = [];
+        for (let index = 0; index < path.length - 1; index += 1) {
+          const start = path[index];
+          const end = path[index + 1];
+          const length =
+            google.maps.geometry?.spherical?.computeDistanceBetween
+              ? google.maps.geometry.spherical.computeDistanceBetween(start, end)
+              : 0;
+          if (!length) continue;
+          const heading =
+            google.maps.geometry?.spherical?.computeHeading
+              ? google.maps.geometry.spherical.computeHeading(start, end)
+              : 0;
+          segments.push({ start, end, length, heading });
+        }
+        return segments;
+      }
+
+      function interpolatePosition(start, end, fraction) {
+        if (google.maps.geometry?.spherical?.interpolate) {
+          return google.maps.geometry.spherical.interpolate(start, end, fraction);
+        }
+        const lat = start.lat() + (end.lat() - start.lat()) * fraction;
+        const lng = start.lng() + (end.lng() - start.lng()) * fraction;
+        return new google.maps.LatLng(lat, lng);
+      }
+
+      function centerMapOnPosition(map, position) {
+        if (!map || !position) return;
+        const currentCenter = typeof map.getCenter === 'function' ? map.getCenter() : null;
+        let shouldCenter = true;
+        if (currentCenter && google.maps.geometry?.spherical?.computeDistanceBetween) {
+          const distance = google.maps.geometry.spherical.computeDistanceBetween(
+            currentCenter,
+            position
+          );
+          shouldCenter = distance > 1;
+        }
+        if (!shouldCenter) return;
+        if (typeof map.setCenter === 'function') {
+          map.setCenter(position);
+        } else if (typeof map.panTo === 'function') {
+          map.panTo(position);
+        }
+      }
+
       window.addEventListener('message', (ev) => {
         if (!ev || !ev.data || ev.data.type !== 'INIT') return;
         payload = ev.data.payload;
@@ -317,9 +365,19 @@ async function openRecorderPopup(routePayload) {
 
         // 2) Build map + route
         const map = new google.maps.Map(document.getElementById('map'), {
-          center: { lat: 20, lng: 0 }, zoom: 4, mapTypeControl: false,
-          streetViewControl: false, fullscreenControl: false
+          center: { lat: 20, lng: 0 },
+          zoom: 4,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
         });
+        if (payload?.mapType) {
+          try {
+            map.setMapTypeId(payload.mapType);
+          } catch (error) {
+            console.warn('Unable to set map type for recorder popup', error);
+          }
+        }
         const svc = new google.maps.DirectionsService();
         const rdr = new google.maps.DirectionsRenderer({
           map, suppressMarkers: false,
@@ -344,13 +402,18 @@ async function openRecorderPopup(routePayload) {
             )
           );
           if (!pts.length) throw new Error('No points to animate');
+          const segments = buildRouteSegments(pts);
+          if (!segments.length) throw new Error('No segments to animate');
 
-          const marker = new google.maps.Marker({ map, position: pts[0], optimized: false });
-          map.setCenter(pts[0]);
+          const marker = new google.maps.Marker({
+            map,
+            position: segments[0].start,
+            optimized: false,
+          });
+          centerMapOnPosition(map, segments[0].start);
 
-          if (pts.length > 1 && google.maps && google.maps.geometry && google.maps.geometry.spherical && typeof google.maps.geometry.spherical.computeHeading === 'function') {
-            const initialHeading = google.maps.geometry.spherical.computeHeading(pts[0], pts[1]);
-            applyMarkerIcon(marker, initialHeading);
+          if (segments.length > 0) {
+            applyMarkerIcon(marker, segments[0].heading);
           } else {
             applyFallbackIcon(marker);
           }
@@ -358,26 +421,92 @@ async function openRecorderPopup(routePayload) {
           // 3) Start recording (user gesture came from the click in this popup)
           const { rec, chunks, stream, mimeType } = await record();
 
-          // 4) Simple animation loop (replace with your vehicle logic if desired)
-          let i = 0;
-          function tick() {
-            if (i >= pts.length) {
-              try { rec.requestData?.(); rec.stop(); } catch {}
+          const baseSpeed = Number(payload?.baseSpeed);
+          const multiplier = Number(payload?.speedMultiplier);
+          const animationSpeed =
+            (Number.isFinite(baseSpeed) ? baseSpeed : 65) *
+            (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
+
+          const animation = {
+            frameId: null,
+            lastTimestamp: null,
+            segmentIndex: 0,
+            distanceIntoSegment: 0,
+            speed: animationSpeed,
+            active: true,
+          };
+
+          function finishAnimation() {
+            if (!animation.active) return;
+            animation.active = false;
+            if (animation.frameId) {
+              cancelAnimationFrame(animation.frameId);
+              animation.frameId = null;
+            }
+            try {
+              rec.requestData?.();
+            } catch (error) {
+              console.warn('Unable to request final recorder data', error);
+            }
+            try {
+              rec.stop();
+            } catch (error) {
+              console.warn('Unable to stop recorder cleanly', error);
+            }
+          }
+
+          function step(timestamp) {
+            if (!animation.active) return;
+            if (animation.lastTimestamp === null) {
+              animation.lastTimestamp = timestamp;
+              animation.frameId = requestAnimationFrame(step);
               return;
             }
-            const point = pts[i];
-            if (i > 0 && google.maps && google.maps.geometry && google.maps.geometry.spherical && typeof google.maps.geometry.spherical.computeHeading === 'function') {
-              const heading = google.maps.geometry.spherical.computeHeading(pts[i - 1], point);
-              applyMarkerIcon(marker, heading);
+
+            const deltaSeconds = (timestamp - animation.lastTimestamp) / 1000;
+            animation.lastTimestamp = timestamp;
+            let distanceToTravel = deltaSeconds * animation.speed;
+
+            while (distanceToTravel > 0 && animation.segmentIndex < segments.length) {
+              const segment = segments[animation.segmentIndex];
+              const remaining = segment.length - animation.distanceIntoSegment;
+              if (distanceToTravel >= remaining) {
+                distanceToTravel -= remaining;
+                animation.segmentIndex += 1;
+                animation.distanceIntoSegment = 0;
+                if (animation.segmentIndex >= segments.length) {
+                  marker.setPosition(segment.end);
+                  centerMapOnPosition(map, segment.end);
+                  finishAnimation();
+                  return;
+                }
+                const nextSegment = segments[animation.segmentIndex];
+                applyMarkerIcon(marker, nextSegment.heading);
+              } else {
+                animation.distanceIntoSegment += distanceToTravel;
+                distanceToTravel = 0;
+              }
             }
-            marker.setPosition(point);
-            map.panTo(point);
-            i++;
-            requestAnimationFrame(tick);
+
+            if (animation.segmentIndex < segments.length) {
+              const segment = segments[animation.segmentIndex];
+              const fraction =
+                segment.length === 0 ? 0 : animation.distanceIntoSegment / segment.length;
+              const position = interpolatePosition(segment.start, segment.end, fraction);
+              marker.setPosition(position);
+              centerMapOnPosition(map, position);
+              animation.frameId = requestAnimationFrame(step);
+            }
           }
-          tick();
+
+          animation.frameId = requestAnimationFrame(step);
 
           rec.onstop = () => {
+            animation.active = false;
+            if (animation.frameId) {
+              cancelAnimationFrame(animation.frameId);
+              animation.frameId = null;
+            }
             stream.getTracks().forEach(t => t.stop());
             if (chunks.length) {
               const blob = new Blob(chunks, { type: mimeType });
@@ -438,6 +567,9 @@ async function openRecorderPopup(routePayload) {
         apiKey,
         vehicleIcons: vehicleIconsPayload,
         iconSize: iconSizePayload,
+        mapType: mapTypePreference,
+        speedMultiplier: animationSpeedMultiplier,
+        baseSpeed: baseAnimationSpeed,
       },
     },
     "*"
@@ -673,6 +805,14 @@ function initialiseAnimationControls() {
       setStatus("Plot a route before previewing the animation.", "error");
       return;
     }
+    if (animationState && !animationState.recording) {
+      finalizeAnimation({
+        statusMessage: "Preview stopped.",
+        statusType: "info",
+        shouldSaveRecording: false,
+      });
+      return;
+    }
     startRouteAnimation({ record: false });
   });
 
@@ -735,7 +875,15 @@ function updateAnimationButtons() {
   const recording = isRecordingInProgress;
 
   if (animationControls.previewButton) {
-    animationControls.previewButton.disabled = !enabled || !hasRoute || running;
+    const runningPreview = running && !animationState?.recording;
+    animationControls.previewButton.disabled = !enabled || !hasRoute || recording;
+    animationControls.previewButton.textContent = runningPreview
+      ? "Stop preview"
+      : "Preview animation";
+    animationControls.previewButton.setAttribute(
+      "aria-pressed",
+      runningPreview ? "true" : "false"
+    );
   }
 
   if (animationControls.downloadButton) {
