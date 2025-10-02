@@ -615,10 +615,24 @@ function createAnimationRecorder() {
 
   const mapElement = document.getElementById("map");
   if (!mapElement) return null;
-  const canvas = mapElement.querySelector("canvas");
+
+  const canvases = Array.from(mapElement.querySelectorAll("canvas"));
+  const canvas = canvases.find((candidate) => {
+    if (!candidate) return false;
+    const rect = candidate.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) {
+      return false;
+    }
+    const style = window.getComputedStyle(candidate);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return false;
+    }
+    return true;
+  });
+
   const sourceElement = canvas ?? mapElement;
   const captureStream =
-    sourceElement.captureStream ?? sourceElement.mozCaptureStream ?? null;
+    sourceElement?.captureStream ?? sourceElement?.mozCaptureStream ?? null;
   if (typeof captureStream !== "function") {
     return null;
   }
@@ -633,13 +647,16 @@ function createAnimationRecorder() {
   if (!stream) {
     return null;
   }
+
+  const videoTracks = stream.getVideoTracks?.() ?? [];
+  if (!videoTracks.length) {
+    stream.getTracks?.().forEach((track) => track.stop());
+    return null;
+  }
   const preferredTypes = [
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
     "video/webm",
-    "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-    "video/mp4;codecs=h264,aac",
-    "video/mp4",
   ];
   let mimeType = null;
   for (const type of preferredTypes) {
@@ -780,8 +797,7 @@ function saveRecording(recording) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  const extension = recording.mimeType.includes("webm") ? "webm" : "mp4";
-  link.download = `travelmap-animation-${Date.now()}.${extension}`;
+  link.download = `travelmap-animation-${Date.now()}.webm`;
   document.body.appendChild(link);
   link.click();
   requestAnimationFrame(() => {
