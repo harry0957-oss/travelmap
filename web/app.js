@@ -607,17 +607,28 @@ function createAnimationRecorder() {
   }
 
   const chunks = [];
+  let resolveStopped;
+  const stopped = new Promise((resolve) => {
+    resolveStopped = resolve;
+  });
   const recorder = new MediaRecorder(stream, {
     mimeType,
     videoBitsPerSecond: 5_000_000,
   });
-  recorder.ondataavailable = (event) => {
+  recorder.addEventListener("dataavailable", (event) => {
     if (event.data && event.data.size > 0) {
       chunks.push(event.data);
     }
-  };
+  });
+  recorder.addEventListener(
+    "stop",
+    () => {
+      resolveStopped?.();
+    },
+    { once: true }
+  );
 
-  return { recorder, chunks, mimeType };
+  return { recorder, chunks, mimeType, stopped, stream };
 }
 
 function finalizeAnimation({
@@ -641,21 +652,53 @@ function finalizeAnimation({
   }
 
   if (recording) {
-    const { recorder } = recording;
-    const finishRecording = () => {
+    const { recorder, stopped = Promise.resolve(), stream } = recording;
+    let hasFinalized = false;
+    const finalizeRecording = () => {
+      if (hasFinalized) return;
+      hasFinalized = true;
       if (shouldSaveRecording) {
-        saveRecording(recording);
+        if (recording.chunks.length) {
+          saveRecording(recording);
+        } else {
+          console.error("MediaRecorder finished without delivering any data chunks.");
+          setStatus(
+            "No animation data was recorded. Please keep the tab visible and try a browser that supports MediaRecorder.",
+            "error"
+          );
+        }
       } else if (statusMessage) {
         setStatus(statusMessage, statusType);
       }
+      stream?.getTracks?.().forEach((track) => track.stop());
       isRecordingInProgress = false;
       updateAnimationButtons();
     };
+
+    stopped
+      .catch((error) => {
+        console.error("Recording did not stop cleanly", error);
+      })
+      .then(() => {
+        finalizeRecording();
+      });
+
     if (recorder.state !== "inactive") {
-      recorder.addEventListener("stop", finishRecording, { once: true });
-      recorder.stop();
-    } else {
-      finishRecording();
+      if (typeof recorder.requestData === "function") {
+        try {
+          recorder.requestData();
+        } catch (error) {
+          console.warn("Unable to request final recording data", error);
+        }
+      }
+      try {
+        recorder.stop();
+      } catch (error) {
+        console.error("Unable to stop recorder", error);
+        Promise.resolve().then(() => {
+          finalizeRecording();
+        });
+      }
     }
   } else {
     if (statusMessage) {
