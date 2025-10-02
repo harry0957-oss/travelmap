@@ -56,7 +56,7 @@ class AnimationConfig:
     description: Optional[str] = None
     speed_kmh: float = 80.0
     frame_rate: int = 30
-    output_path: Path = Path("travelmap.mp4")
+    output_path: Path = Path("travelmap.webm")
     width: int = 1920
     height: int = 1080
     margin_degrees: float = 5.0
@@ -76,7 +76,7 @@ class AnimationConfig:
         if len(waypoints) < 2:
             raise ValueError("At least two waypoints are required to build an itinerary.")
 
-        output_path = data.get("output") or data.get("output_path") or "travelmap.mp4"
+        output_path = data.get("output") or data.get("output_path") or "travelmap.webm"
 
         return AnimationConfig(
             title=data.get("title", ""),

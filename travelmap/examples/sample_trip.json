@@ -15,5 +15,5 @@
     {"name": "Rome", "lat": 41.9028, "lon": 12.4964, "pause": 0.5},
     {"name": "Athens", "lat": 37.9838, "lon": 23.7275, "pause": 1.0}
   ],
-  "output": "output/european_adventure.mp4"
+  "output": "output/european_adventure.webm"
 }

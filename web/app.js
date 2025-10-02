@@ -634,12 +634,12 @@ function createAnimationRecorder() {
     return null;
   }
   const preferredTypes = [
-    "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-    "video/mp4;codecs=h264,aac",
-    "video/mp4",
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
     "video/webm",
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+    "video/mp4;codecs=h264,aac",
+    "video/mp4",
   ];
   let mimeType = null;
   for (const type of preferredTypes) {
@@ -780,7 +780,7 @@ function saveRecording(recording) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  const extension = recording.mimeType.includes("mp4") ? "mp4" : "webm";
+  const extension = recording.mimeType.includes("webm") ? "webm" : "mp4";
   link.download = `travelmap-animation-${Date.now()}.${extension}`;
   document.body.appendChild(link);
   link.click();
