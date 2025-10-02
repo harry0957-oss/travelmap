@@ -4,7 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Travel Map Planner</title>
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" id="mainStylesheet" />
+    <script>
+      (function () {
+        const modifiedText = document.lastModified;
+        const parsed = modifiedText ? new Date(modifiedText) : null;
+        const version = parsed && !Number.isNaN(parsed.valueOf()) ? parsed.toISOString() : new Date().toISOString();
+
+        window.APP_VERSION = version;
+        document.documentElement.setAttribute("data-app-version", version);
+
+        const stylesheet = document.getElementById("mainStylesheet");
+        if (stylesheet) {
+          stylesheet.href = `style.css?v=${encodeURIComponent(version)}`;
+        }
+      })();
+    </script>
   </head>
   <body>
     <header>
@@ -13,6 +28,9 @@
         Plan your journey by entering a start point, any number of waypoints and a final
         destination. Routes are rendered with Google Maps for accurate turn-by-turn
         directions.
+      </p>
+      <p class="version-label" aria-live="polite">
+        Version: <span id="appVersion">Loading…</span>
       </p>
     </header>
     <main>
@@ -113,9 +131,19 @@
         <div id="map" role="region" aria-label="Route map"></div>
       </section>
     </main>
-    <script src="app.js"></script>
+    <script>
+      (function () {
+        const version = window.APP_VERSION || new Date().toISOString();
+        const versionElement = document.getElementById("appVersion");
+        if (versionElement) {
+          versionElement.textContent = version;
+        }
+
+        const scriptSrc = `app.js?v=${encodeURIComponent(version)}`;
+        document.write(`<script src="${scriptSrc}"><\/script>`);
+      })();
+    </script>
     <script
-      async
       defer
       src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBEQXlNW6hW-F_VqL9OVtt3YABfl545MkU&callback=initMap&libraries=geometry"
     ></script>

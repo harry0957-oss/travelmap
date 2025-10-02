@@ -785,6 +785,13 @@ function createDefaultVehicleIcons() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  const versionElement = document.getElementById("appVersion");
+  const version = window.APP_VERSION ?? "dev-build";
+  if (versionElement) {
+    versionElement.textContent = version;
+  }
+  console.info(`Travel Map Planner version: ${version}`);
+
   initialiseForm();
   initialiseVehicleIconUploads();
   initialiseAnimationControls();
