@@ -4,7 +4,7 @@ let directionsRenderer;
 let mapReady = false;
 
 const waypointClass = "waypoint-input";
-const desiredIconSize = { width: 64, height: 128 };
+const desiredIconSize = { width: 128, height: 64 };
 const directionOrder = ["north", "east", "south", "west"];
 const defaultVehicleIcons = createDefaultVehicleIcons();
 const customVehicleIcons = {
@@ -188,7 +188,7 @@ function handleVehicleIconUpload(direction, file) {
       customVehicleIcons[direction] = dataUrl;
       updateVehicleIconPreview(direction);
       if (animationState?.currentDirection === direction && vehicleMarker) {
-        vehicleMarker.setIcon(getVehicleIcon(direction));
+        updateVehicleMarkerIcon(direction, animationState.motionOffsets);
       }
       setStatus(`Updated ${direction} vehicle icon.`, "success");
     })
@@ -351,6 +351,8 @@ function startRouteAnimation({ record = false } = {}) {
     frameId: null,
     currentDirection: initialDirection,
     recording: null,
+    motionElapsed: 0,
+    motionOffsets: { bounce: 0, sway: 0 },
   };
 
   if (record) {
@@ -393,6 +395,11 @@ function startRouteAnimation({ record = false } = {}) {
 
     const deltaSeconds = (timestamp - animationState.lastTimestamp) / 1000;
     animationState.lastTimestamp = timestamp;
+    animationState.motionElapsed += deltaSeconds;
+    const bounce = Math.sin(animationState.motionElapsed * 1.5) * 2.5;
+    const sway = Math.sin(animationState.motionElapsed * 1.1 + Math.PI / 6) * 1.8;
+    animationState.motionOffsets = { bounce, sway };
+    updateVehicleMarkerIcon(animationState.currentDirection, animationState.motionOffsets);
     let distanceToTravel = deltaSeconds * animationState.speed;
 
     while (distanceToTravel > 0 && animationState.segmentIndex < animationState.segments.length) {
@@ -410,7 +417,7 @@ function startRouteAnimation({ record = false } = {}) {
         const nextSegment = animationState.segments[animationState.segmentIndex];
         const nextDirection = determineDirection(nextSegment.heading);
         animationState.currentDirection = nextDirection;
-        vehicleMarker.setIcon(getVehicleIcon(nextDirection));
+        updateVehicleMarkerIcon(nextDirection, animationState.motionOffsets);
       } else {
         animationState.distanceIntoSegment += distanceToTravel;
         distanceToTravel = 0;
@@ -465,14 +472,21 @@ function interpolatePosition(start, end, fraction) {
   return new google.maps.LatLng(lat, lng);
 }
 
-function getVehicleIcon(direction) {
+function getVehicleIcon(direction, { bounce = 0, sway = 0 } = {}) {
   const iconUrl = customVehicleIcons[direction] ?? defaultVehicleIcons[direction];
+  const anchorX = desiredIconSize.width / 2 + sway;
+  const anchorY = desiredIconSize.height - 8 + bounce;
   return {
     url: iconUrl,
     size: new google.maps.Size(desiredIconSize.width, desiredIconSize.height),
     scaledSize: new google.maps.Size(desiredIconSize.width, desiredIconSize.height),
-    anchor: new google.maps.Point(desiredIconSize.width / 2, desiredIconSize.height - 10),
+    anchor: new google.maps.Point(anchorX, anchorY),
   };
+}
+
+function updateVehicleMarkerIcon(direction, offsets = { bounce: 0, sway: 0 }) {
+  if (!vehicleMarker) return;
+  vehicleMarker.setIcon(getVehicleIcon(direction, offsets));
 }
 
 function createAnimationRecorder() {
