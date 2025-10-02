@@ -20,6 +20,7 @@ let vehicleMarker = null;
 let animationState = null;
 let isRecordingInProgress = false;
 let mapTypePreference = "roadmap";
+let recordingOverlayElement = null;
 const animationControls = {
   enableCheckbox: null,
   previewButton: null,
@@ -54,6 +55,101 @@ function setStatus(message, type = "info") {
   } else {
     delete statusEl.dataset.type;
   }
+}
+
+function getBrowserBrandNames() {
+  const brands = navigator?.userAgentData?.brands;
+  if (Array.isArray(brands)) {
+    return brands.map((entry) => entry?.brand?.toLowerCase?.() ?? "").filter(Boolean);
+  }
+  return [];
+}
+
+function isLikelyBackgroundThrottledBrowser() {
+  const brandMatches = getBrowserBrandNames().some((brand) =>
+    /(chrome|chromium|edge|opera|brave|vivaldi)/i.test(brand)
+  );
+  if (brandMatches) {
+    return true;
+  }
+  const userAgent = navigator?.userAgent ?? "";
+  if (!userAgent) {
+    return false;
+  }
+  if (/Chrom(e|ium)|Edg|OPR|Brave|Vivaldi/i.test(userAgent) && !/Mobile Safari/i.test(userAgent)) {
+    return true;
+  }
+  return false;
+}
+
+function ensureRecordingOverlay() {
+  if (recordingOverlayElement?.isConnected) {
+    return recordingOverlayElement;
+  }
+  const mapElement = document.getElementById("map");
+  if (!mapElement) {
+    return null;
+  }
+  const computedStyle = window.getComputedStyle(mapElement);
+  if (computedStyle.position === "static") {
+    mapElement.dataset.recordingOverlayPosition = "relative";
+    mapElement.style.position = "relative";
+  }
+  const overlay = document.createElement("div");
+  overlay.id = "mapRecordingIndicator";
+  overlay.setAttribute("role", "status");
+  overlay.style.position = "absolute";
+  overlay.style.top = "1rem";
+  overlay.style.right = "1rem";
+  overlay.style.zIndex = "2000";
+  overlay.style.padding = "0.75rem 1rem";
+  overlay.style.borderRadius = "0.5rem";
+  overlay.style.background = "rgba(6, 20, 34, 0.85)";
+  overlay.style.color = "#fff";
+  overlay.style.fontWeight = "600";
+  overlay.style.boxShadow = "0 6px 16px rgba(0, 0, 0, 0.25)";
+  overlay.style.maxWidth = "18rem";
+  overlay.style.pointerEvents = "none";
+  overlay.style.display = "none";
+  overlay.style.textAlign = "left";
+  overlay.style.lineHeight = "1.4";
+  mapElement.appendChild(overlay);
+  recordingOverlayElement = overlay;
+  return overlay;
+}
+
+function showRecordingIndicator(message, tone = "info") {
+  const overlay = ensureRecordingOverlay();
+  if (!overlay) {
+    return;
+  }
+  overlay.textContent = message;
+  overlay.style.display = "block";
+  overlay.dataset.tone = tone;
+  overlay.style.background =
+    tone === "warning" ? "rgba(239, 71, 111, 0.92)" : "rgba(6, 20, 34, 0.85)";
+}
+
+function hideRecordingIndicator() {
+  if (!recordingOverlayElement) {
+    return;
+  }
+  recordingOverlayElement.style.display = "none";
+  recordingOverlayElement.textContent = "";
+}
+
+function getRecordingStatusDetails() {
+  if (isLikelyBackgroundThrottledBrowser()) {
+    return {
+      message:
+        "Recording in progress. Keep this tab visible while the video is captured to avoid an empty download.",
+      type: "warning",
+    };
+  }
+  return {
+    message: "Recording animation…",
+    type: "info",
+  };
 }
 
 function createWaypointRow(value = "") {
@@ -444,13 +540,21 @@ function startRouteAnimation({ record = false } = {}) {
     state.recording = recording;
     isRecordingInProgress = true;
     try {
-      recording.recorder.start();
+      const { message, type } = getRecordingStatusDetails();
+      showRecordingIndicator(message, type);
+      if (typeof recording.start === "function") {
+        recording.start();
+      } else {
+        recording.recorder.start();
+      }
     } catch (error) {
       console.error("Unable to start recording", error);
       isRecordingInProgress = false;
       state.recording = null;
       vehicleMarker.setMap(null);
       vehicleMarker = null;
+      hideRecordingIndicator();
+      recording.stream?.getTracks?.().forEach((track) => track.stop());
       setStatus("Recording could not be started.", "error");
       updateAnimationButtons();
       return;
@@ -458,7 +562,13 @@ function startRouteAnimation({ record = false } = {}) {
   }
 
   animationState = state;
-  setStatus(record ? "Recording animation…" : "Animation started.", "info");
+  if (record) {
+    const { message, type } = getRecordingStatusDetails();
+    setStatus(message, type);
+  } else {
+    hideRecordingIndicator();
+    setStatus("Animation started.", "info");
+  }
   updateAnimationButtons();
 
   const step = (timestamp) => {
@@ -616,43 +726,67 @@ function createAnimationRecorder() {
   const mapElement = document.getElementById("map");
   if (!mapElement) return null;
 
-  const canvases = Array.from(mapElement.querySelectorAll("canvas"));
-  const canvas = canvases.find((candidate) => {
-    if (!candidate) return false;
-    const rect = candidate.getBoundingClientRect();
-    if (!rect || rect.width === 0 || rect.height === 0) {
-      return false;
-    }
-    const style = window.getComputedStyle(candidate);
-    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
-      return false;
-    }
-    return true;
-  });
+  const visibleCanvases = Array.from(mapElement.querySelectorAll("canvas"))
+    .filter((candidate) => {
+      if (!candidate) return false;
+      const rect = candidate.getBoundingClientRect();
+      if (!rect || rect.width === 0 || rect.height === 0) {
+        return false;
+      }
+      const style = window.getComputedStyle(candidate);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const rectA = a.getBoundingClientRect();
+      const rectB = b.getBoundingClientRect();
+      const areaA = rectA.width * rectA.height;
+      const areaB = rectB.width * rectB.height;
+      return areaB - areaA;
+    });
 
-  const sourceElement = canvas ?? mapElement;
-  const captureStream =
-    sourceElement?.captureStream ?? sourceElement?.mozCaptureStream ?? null;
-  if (typeof captureStream !== "function") {
-    return null;
+  const captureCandidates = [];
+  captureCandidates.push(mapElement);
+  captureCandidates.push(...visibleCanvases);
+
+  let stream = null;
+  let sourceElement = null;
+  const stopStream = (candidateStream) => {
+    candidateStream?.getTracks?.().forEach((track) => track.stop());
+  };
+
+  for (const candidate of captureCandidates) {
+    if (!candidate) continue;
+    const captureStreamFn = candidate.captureStream ?? candidate.mozCaptureStream;
+    if (typeof captureStreamFn !== "function") {
+      continue;
+    }
+    let candidateStream;
+    try {
+      candidateStream = captureStreamFn.call(candidate, 60);
+    } catch (error) {
+      console.warn("Unable to capture stream from candidate element", error);
+      continue;
+    }
+    if (!candidateStream) {
+      continue;
+    }
+    const videoTracks = candidateStream.getVideoTracks?.() ?? [];
+    if (!videoTracks.length) {
+      stopStream(candidateStream);
+      continue;
+    }
+    stream = candidateStream;
+    sourceElement = candidate;
+    break;
   }
 
-  let stream;
-  try {
-    stream = captureStream.call(sourceElement, 60);
-  } catch (error) {
-    console.error("Unable to capture map stream", error);
-    return null;
-  }
   if (!stream) {
     return null;
   }
 
-  const videoTracks = stream.getVideoTracks?.() ?? [];
-  if (!videoTracks.length) {
-    stream.getTracks?.().forEach((track) => track.stop());
-    return null;
-  }
   const preferredTypes = [
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
@@ -666,30 +800,64 @@ function createAnimationRecorder() {
     }
   }
   if (!mimeType) {
+    stopStream(stream);
     return null;
   }
 
   const chunks = [];
+  let hasData = false;
   let resolveStopped;
   let resolveDataFinished;
+  let resolveFirstChunk;
+  let dataKickTimeout = null;
   const stopped = new Promise((resolve) => {
     resolveStopped = resolve;
   });
   const dataFinished = new Promise((resolve) => {
     resolveDataFinished = resolve;
   });
-  const recorder = new MediaRecorder(stream, {
-    mimeType,
-    videoBitsPerSecond: 5_000_000,
+  const firstChunkCaptured = new Promise((resolve) => {
+    resolveFirstChunk = resolve;
   });
+
+  let recorder;
+  try {
+    recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: 5_000_000,
+    });
+  } catch (error) {
+    console.error("Unable to create MediaRecorder", error);
+    stopStream(stream);
+    return null;
+  }
+
+  recorder.addEventListener("start", () => {
+    if (dataKickTimeout) {
+      clearTimeout(dataKickTimeout);
+    }
+    dataKickTimeout = window.setTimeout(() => {
+      if (!hasData && typeof recorder.requestData === "function" && recorder.state !== "inactive") {
+        try {
+          recorder.requestData();
+        } catch (error) {
+          console.warn("Unable to request interim recording data", error);
+        }
+      }
+    }, 2_000);
+  });
+
   recorder.addEventListener("dataavailable", (event) => {
     if (event.data && event.data.size > 0) {
       chunks.push(event.data);
+      hasData = true;
+      resolveFirstChunk?.();
     }
     if (recorder.state === "inactive") {
       resolveDataFinished?.();
     }
   });
+
   recorder.addEventListener(
     "stop",
     () => {
@@ -697,17 +865,27 @@ function createAnimationRecorder() {
       requestAnimationFrame(() => {
         resolveDataFinished?.();
       });
+      if (dataKickTimeout) {
+        clearTimeout(dataKickTimeout);
+        dataKickTimeout = null;
+      }
     },
     { once: true }
   );
 
   return {
     recorder,
+    start(timeslice = 1_000) {
+      recorder.start(timeslice);
+    },
     chunks,
     mimeType,
     stopped,
     finished: Promise.all([stopped, dataFinished]),
     stream,
+    sourceElement,
+    hasData: () => hasData,
+    firstChunk: firstChunkCaptured,
   };
 }
 
@@ -717,6 +895,7 @@ function finalizeAnimation({
   keepMarker = false,
   shouldSaveRecording = true,
 } = {}) {
+  hideRecordingIndicator();
   const recording = animationState?.recording ?? null;
   const frameId = animationState?.frameId ?? null;
 
@@ -741,9 +920,12 @@ function finalizeAnimation({
         if (recording.chunks.length) {
           saveRecording(recording);
         } else {
-          console.error("MediaRecorder finished without delivering any data chunks.");
+          console.error(
+            "MediaRecorder finished without delivering any data chunks.",
+            recording.sourceElement
+          );
           setStatus(
-            "No animation data was recorded. Please keep the tab visible and try a browser that supports MediaRecorder.",
+            "No animation data reached the recorder. Keep this tab visible and consider using your browser's screen recording (MediaDevices.getDisplayMedia) as a fallback.",
             "error"
           );
         }
@@ -755,10 +937,29 @@ function finalizeAnimation({
       updateAnimationButtons();
     };
 
+    const waitForRecordingData = recording.firstChunk
+      ? new Promise((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          const timeoutId = setTimeout(finish, 500);
+          recording.firstChunk
+            .then(finish)
+            .catch(finish)
+            .finally(() => {
+              clearTimeout(timeoutId);
+            });
+        })
+      : Promise.resolve();
+
     finished
       .catch((error) => {
         console.error("Recording did not stop cleanly", error);
       })
+      .then(() => waitForRecordingData)
       .then(() => {
         finalizeRecording();
       });
