@@ -192,6 +192,184 @@ function gatherWaypointValues() {
     .filter(Boolean);
 }
 
+async function openRecorderPopup(routePayload) {
+  const w = 1920;
+  const h = 1080;
+  const features = `popup=yes,resizable=no,scrollbars=no,width=${w},height=${h},left=50,top=50`;
+  const win = window.open("", "map-recorder", features);
+  if (!win) {
+    setStatus("Pop-up blocked. Allow pop-ups to record.", "error");
+    return null;
+  }
+
+  win.document.write(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Map Recorder</title>
+<style>
+  html,body { margin:0; height:100%; background:#0b1020; color:#eaf1ff; font-family:system-ui,-apple-system,Segoe UI,Roboto; }
+  #wrap { height:100%; display:grid; place-items:center; }
+  #stage { width:1920px; height:1080px; background:#000; position:relative; }
+  #map { position:absolute; inset:0; }
+  #ui { position:absolute; inset:auto 16px 16px auto; z-index:10; }
+  button { padding:10px 16px; border-radius:8px; border:none; cursor:pointer; }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="stage">
+      <div id="map"></div>
+      <div id="ui"><button id="startBtn">Start recording</button></div>
+    </div>
+  </div>
+  <script>
+    (function(){
+      let payload = null;
+
+      window.addEventListener('message', (ev) => {
+        if (!ev || !ev.data || ev.data.type !== 'INIT') return;
+        payload = ev.data.payload;
+        // Enable the button when we have data
+        document.getElementById('startBtn').disabled = false;
+      });
+
+      async function loadMaps(apiKey) {
+        if (window.google && window.google.maps) return;
+        await new Promise((res, rej) => {
+          const s = document.createElement('script');
+          s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(apiKey) + '&libraries=geometry';
+          s.onload = res; s.onerror = rej;
+          document.head.appendChild(s);
+        });
+      }
+
+      async function record() {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 60, displaySurface: "window" }, // user selects this popup
+          audio: false
+        });
+        const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+          ? 'video/webm;codecs=vp9,opus'
+          : (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'video/webm;codecs=vp8,opus' : 'video/webm');
+
+        const chunks = [];
+        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5_000_000 });
+        rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.start(500);
+        return { rec, chunks, stream, mimeType: mime };
+      }
+
+      async function run() {
+        const btn = document.getElementById('startBtn');
+        btn.disabled = true;
+
+        // 1) Load Google Maps in popup
+        try {
+          await loadMaps(payload.apiKey);
+        } catch {
+          alert('Failed to load Google Maps in popup. Check API key.');
+          btn.disabled = false;
+          return;
+        }
+
+        // 2) Build map + route
+        const map = new google.maps.Map(document.getElementById('map'), {
+          center: { lat: 20, lng: 0 }, zoom: 4, mapTypeControl: false,
+          streetViewControl: false, fullscreenControl: false
+        });
+        const svc = new google.maps.DirectionsService();
+        const rdr = new google.maps.DirectionsRenderer({
+          map, suppressMarkers: false,
+          polylineOptions: { strokeColor: "#53a9ff", strokeWeight: 5 }
+        });
+
+        try {
+          const res = await svc.route({
+            origin: payload.start,
+            destination: payload.end,
+            waypoints: (payload.waypoints || []).map(v => ({ location: v, stopover: true })),
+            optimizeWaypoints: false,
+            travelMode: google.maps.TravelMode.DRIVING
+          });
+          rdr.setDirections(res);
+
+          // Extract dense path
+          const pts = [];
+          (res.routes[0].legs||[]).forEach(leg =>
+            (leg.steps||[]).forEach(step =>
+              (step.path||[]).forEach(p => pts.push(p))
+            )
+          );
+          if (!pts.length) throw new Error('No points to animate');
+
+          const marker = new google.maps.Marker({ map, position: pts[0] });
+          map.setCenter(pts[0]);
+
+          // 3) Start recording (user gesture came from the click in this popup)
+          const { rec, chunks, stream, mimeType } = await record();
+
+          // 4) Simple animation loop (replace with your vehicle logic if desired)
+          let i = 0;
+          function tick() {
+            if (i >= pts.length) {
+              try { rec.requestData?.(); rec.stop(); } catch {}
+              return;
+            }
+            marker.setPosition(pts[i]);
+            map.panTo(pts[i]);
+            i++;
+            requestAnimationFrame(tick);
+          }
+          tick();
+
+          rec.onstop = () => {
+            stream.getTracks().forEach(t => t.stop());
+            if (chunks.length) {
+              const blob = new Blob(chunks, { type: mimeType });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = 'travelmap-animation-' + Date.now() + '.webm';
+              document.body.appendChild(a); a.click();
+              requestAnimationFrame(() => { URL.revokeObjectURL(url); a.remove(); });
+            } else {
+              alert('No animation data was recorded.');
+            }
+          };
+
+        } catch (e) {
+          console.error(e);
+          alert('Failed to initialize route or recording.');
+          btn.disabled = false;
+        }
+      }
+
+      document.getElementById('startBtn').addEventListener('click', run);
+      // Disable until we receive INIT payload
+      document.getElementById('startBtn').disabled = true;
+    })();
+  </script>
+</body>
+</html>`);
+  win.document.close();
+
+  const existingScript = document.querySelector('script[src*="maps.googleapis.com/maps/api/js"]');
+  let apiKey = window.GMAPS_API_KEY || "YOUR_API_KEY";
+  if (existingScript?.src) {
+    try {
+      const url = new URL(existingScript.src);
+      apiKey = url.searchParams.get("key") || apiKey;
+    } catch (error) {
+      console.warn("Unable to parse Google Maps script URL", error);
+    }
+  }
+
+  win.postMessage({ type: "INIT", payload: { ...routePayload, apiKey } }, "*");
+
+  win.focus();
+  return win;
+}
+
 function plotRoute(start, end, waypointValues) {
   if (!mapReady) {
     setStatus("The map is still loading. Please try again shortly.", "info");
@@ -421,12 +599,22 @@ function initialiseAnimationControls() {
     startRouteAnimation({ record: false });
   });
 
-  animationControls.downloadButton?.addEventListener("click", () => {
+  animationControls.downloadButton?.addEventListener("click", async () => {
     if (!currentRouteSegments.length) {
       setStatus("Plot a route before downloading the animation.", "error");
       return;
     }
-    startPopupRecordingFlow();
+    const payload = {
+      start: document.getElementById("startInput")?.value.trim() ?? "",
+      end: document.getElementById("endInput")?.value.trim() ?? "",
+      waypoints: gatherWaypointValues(),
+    };
+    if (!payload.start || !payload.end) {
+      setStatus("Start and end locations are required.", "error");
+      return;
+    }
+    const win = await openRecorderPopup(payload);
+    if (win) setStatus("Popup opened. Click 'Start recording' in the popup window.", "info");
   });
 
   updateAnimationButtons();
@@ -949,330 +1137,6 @@ function saveRecording(recording) {
     link.remove();
   });
   setStatus("Animation downloaded successfully.", "success");
-}
-
-function getGoogleMapsScriptSrc() {
-  const existing = document.querySelector(
-    'script[src*="maps.googleapis.com/maps/api/js"]'
-  );
-  if (existing?.src) {
-    return existing.src;
-  }
-  return "https://maps.googleapis.com/maps/api/js?key=AIzaSyBEQXlNW6hW-F_VqL9OVtt3YABfl545MkU&libraries=geometry";
-}
-
-async function startRecordingInPopup() {
-  const width = 1920;
-  const height = 1080;
-  const features = `popup=yes,noopener=yes,resizable=no,scrollbars=no,width=${width},height=${height},left=50,top=50`;
-  const popup = window.open("", "map-recorder", features);
-  if (!popup) {
-    setStatus("Pop-up blocked. Allow pop-ups to record.", "error");
-    return null;
-  }
-
-  popup.document.write(`<!doctype html>
-<html><head>
-<meta charset="utf-8">
-<title>Map Recorder</title>
-<style>
-  html,body,#map { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; }
-</style>
-</head>
-<body>
-  <div id="map"></div>
-  <script>
-    window.isRecorderWindow = true;
-  </script>
-</body></html>`);
-  popup.document.close();
-  try {
-    popup.focus();
-  } catch (error) {
-    console.warn("Unable to focus popup window", error);
-  }
-
-  return popup;
-}
-
-async function initRecorderMapInWindow(win, payload) {
-  if (!win || win.closed) {
-    throw new Error("Recorder window is not available.");
-  }
-
-  if (!win.google?.maps) {
-    const scriptSrc = getGoogleMapsScriptSrc();
-    await new Promise((resolve, reject) => {
-      const script = win.document.createElement("script");
-      script.src = scriptSrc;
-      script.onload = resolve;
-      script.onerror = reject;
-      win.document.head.appendChild(script);
-    });
-  }
-
-  const mapElement = win.document.getElementById("map");
-  if (!mapElement) {
-    throw new Error("Recorder map element missing.");
-  }
-
-  const popupMap = new win.google.maps.Map(mapElement, {
-    center: { lat: 20, lng: 0 },
-    zoom: 4,
-    mapTypeId: mapTypePreference,
-    mapTypeControl: false,
-    streetViewControl: false,
-    fullscreenControl: false,
-  });
-
-  const popupDirectionsService = new win.google.maps.DirectionsService();
-  const popupDirectionsRenderer = new win.google.maps.DirectionsRenderer({
-    map: popupMap,
-    suppressMarkers: false,
-    polylineOptions: { strokeColor: "#53a9ff", strokeWeight: 5 },
-  });
-
-  const req = {
-    origin: payload.start,
-    destination: payload.end,
-    waypoints: (payload.waypoints ?? []).map((value) => ({
-      location: value,
-      stopover: true,
-    })),
-    optimizeWaypoints: false,
-    travelMode: win.google.maps.TravelMode.DRIVING,
-  };
-
-  const result = await popupDirectionsService.route(req);
-  popupDirectionsRenderer.setDirections(result);
-
-  return { popupMap, result };
-}
-
-function getPopupVehicleIcon(win, direction, { bounce = 0, sway = 0 } = {}) {
-  const iconUrl = customVehicleIcons[direction] ?? defaultVehicleIcons[direction];
-  const anchorX = desiredIconSize.width / 2 + sway;
-  const anchorY = desiredIconSize.height - 8 + bounce;
-  return {
-    url: iconUrl,
-    size: new win.google.maps.Size(desiredIconSize.width, desiredIconSize.height),
-    scaledSize: new win.google.maps.Size(desiredIconSize.width, desiredIconSize.height),
-    anchor: new win.google.maps.Point(anchorX, anchorY),
-  };
-}
-
-async function recordPopupWindow(win) {
-  if (typeof navigator.mediaDevices?.getDisplayMedia !== "function") {
-    throw new Error("Display capture is not supported in this browser.");
-  }
-  if (typeof MediaRecorder === "undefined") {
-    throw new Error("MediaRecorder is not supported in this browser.");
-  }
-
-  const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: 60, displaySurface: "window" },
-    audio: false,
-  });
-
-  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-    ? "video/webm;codecs=vp9,opus"
-    : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
-    ? "video/webm;codecs=vp8,opus"
-    : "video/webm";
-
-  const chunks = [];
-  const recorder = new MediaRecorder(stream, {
-    mimeType,
-    videoBitsPerSecond: 5_000_000,
-  });
-
-  recorder.ondataavailable = (event) => {
-    if (event.data && event.data.size) {
-      chunks.push(event.data);
-    }
-  };
-
-  recorder.start(500);
-
-  return { rec: recorder, chunks, stream, mimeType };
-}
-
-async function startPopupRecordingFlow() {
-  if (isRecordingInProgress) {
-    return;
-  }
-
-  const payload = {
-    start: document.getElementById("startInput")?.value.trim() ?? "",
-    end: document.getElementById("endInput")?.value.trim() ?? "",
-    waypoints: gatherWaypointValues(),
-  };
-
-  if (!payload.start || !payload.end) {
-    setStatus("Start and end locations are required.", "error");
-    return;
-  }
-
-  isRecordingInProgress = true;
-  updateAnimationButtons();
-  setStatus("Preparing recording window…", "info");
-
-  const popupWindow = await startRecordingInPopup();
-  if (!popupWindow) {
-    isRecordingInProgress = false;
-    updateAnimationButtons();
-    return;
-  }
-
-  try {
-    const { popupMap, result } = await initRecorderMapInWindow(popupWindow, payload);
-    const route = result?.routes?.[0];
-    if (!route) {
-      throw new Error("No route available in recorder window.");
-    }
-
-    const points = [];
-    (route.legs ?? []).forEach((leg) => {
-      (leg.steps ?? []).forEach((step) => {
-        (step.path ?? []).forEach((point) => {
-          if (point) {
-            points.push(point);
-          }
-        });
-      });
-    });
-
-    if (!points.length) {
-      throw new Error("Route path could not be extracted for recording.");
-    }
-
-    const startPoint = points[0];
-    const secondPoint = points[1] ?? points[0];
-    const initialHeading = popupWindow.google.maps.geometry?.spherical?.computeHeading
-      ? popupWindow.google.maps.geometry.spherical.computeHeading(startPoint, secondPoint)
-      : 0;
-    let currentDirection = determineDirection(initialHeading);
-
-    const marker = new popupWindow.google.maps.Marker({
-      map: popupMap,
-      position: startPoint,
-      icon: getPopupVehicleIcon(popupWindow, currentDirection),
-      optimized: false,
-    });
-
-    if (typeof popupMap.setCenter === "function") {
-      popupMap.setCenter(startPoint);
-    }
-
-    setStatus("Select the map recorder window in the capture picker.", "info");
-    const recording = await recordPopupWindow(popupWindow);
-    setStatus("Recording animation…", "info");
-
-    let animationFinished = false;
-    const stopRecording = () => {
-      if (animationFinished) return;
-      animationFinished = true;
-      const timerHost = popupWindow?.setTimeout ? popupWindow : window;
-      timerHost.setTimeout(() => {
-        try {
-          recording.rec.requestData?.();
-        } catch (error) {
-          console.warn("Unable to request final recording data", error);
-        }
-        try {
-          recording.rec.stop();
-        } catch (error) {
-          console.warn("Unable to stop recorder", error);
-        }
-      }, 250);
-    };
-
-    recording.rec.onstop = () => {
-      recording.stream.getTracks?.().forEach((track) => track.stop());
-      if (recording.chunks.length) {
-        const blob = new Blob(recording.chunks, { type: recording.mimeType });
-        const downloadUrl = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = downloadUrl;
-        anchor.download = `travelmap-animation-${Date.now()}.webm`;
-        document.body.appendChild(anchor);
-        anchor.click();
-        requestAnimationFrame(() => {
-          URL.revokeObjectURL(downloadUrl);
-          anchor.remove();
-        });
-        setStatus("Animation downloaded successfully.", "success");
-      } else {
-        setStatus("No animation data was recorded.", "error");
-      }
-      try {
-        popupWindow.close();
-      } catch (error) {
-        console.warn("Unable to close recorder window", error);
-      }
-      isRecordingInProgress = false;
-      updateAnimationButtons();
-    };
-
-    let pointIndex = 1;
-    const advanceAnimation = () => {
-      if (animationFinished) {
-        return;
-      }
-
-      if (popupWindow.closed) {
-        stopRecording();
-        return;
-      }
-
-      if (pointIndex >= points.length) {
-        stopRecording();
-        return;
-      }
-
-      const point = points[pointIndex];
-      marker.setPosition(point);
-      if (typeof popupMap.panTo === "function") {
-        popupMap.panTo(point);
-      }
-
-      const nextPoint = points[pointIndex + 1] ?? point;
-      const heading = popupWindow.google.maps.geometry?.spherical?.computeHeading
-        ? popupWindow.google.maps.geometry.spherical.computeHeading(point, nextPoint)
-        : 0;
-      const nextDirection = determineDirection(heading);
-      if (nextDirection !== currentDirection) {
-        currentDirection = nextDirection;
-        marker.setIcon(getPopupVehicleIcon(popupWindow, currentDirection));
-      }
-
-      pointIndex += 1;
-      popupWindow.requestAnimationFrame(advanceAnimation);
-    };
-
-    popupWindow.requestAnimationFrame(advanceAnimation);
-
-    const videoTracks = recording.stream.getVideoTracks?.() ?? [];
-    videoTracks.forEach((track) => {
-      track.addEventListener("ended", () => {
-        stopRecording();
-      });
-    });
-  } catch (error) {
-    console.error("Recording failed to initialize", error);
-    const cancelled = error?.name === "NotAllowedError" || error?.name === "AbortError";
-    setStatus(
-      cancelled ? "Screen capture was cancelled." : "Recording failed to initialize.",
-      "error"
-    );
-    try {
-      popupWindow.close();
-    } catch (closeError) {
-      console.warn("Unable to close recorder window after failure", closeError);
-    }
-    isRecordingInProgress = false;
-    updateAnimationButtons();
-  }
 }
 
 function createDefaultVehicleIcons() {
