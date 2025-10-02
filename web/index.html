@@ -40,6 +40,46 @@
             <label for="endInput">End location</label>
             <input type="text" id="endInput" placeholder="e.g. Los Angeles, CA" required />
           </div>
+          <div class="field">
+            <h3>Vehicle icons</h3>
+            <p class="hint">
+              Upload directional icons for the vehicle. Images larger than 64×128 pixels are
+              automatically resized to fit.
+            </p>
+            <div class="vehicle-icons-grid">
+              <label class="icon-upload">
+                <span>North</span>
+                <input type="file" accept="image/*" data-direction="north" />
+                <img alt="North vehicle preview" data-preview="north" />
+              </label>
+              <label class="icon-upload">
+                <span>East</span>
+                <input type="file" accept="image/*" data-direction="east" />
+                <img alt="East vehicle preview" data-preview="east" />
+              </label>
+              <label class="icon-upload">
+                <span>South</span>
+                <input type="file" accept="image/*" data-direction="south" />
+                <img alt="South vehicle preview" data-preview="south" />
+              </label>
+              <label class="icon-upload">
+                <span>West</span>
+                <input type="file" accept="image/*" data-direction="west" />
+                <img alt="West vehicle preview" data-preview="west" />
+              </label>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-header">
+              <label for="enableAnimation">Animate vehicle</label>
+              <input type="checkbox" id="enableAnimation" checked />
+            </div>
+            <p class="hint">Preview the vehicle travelling along the calculated route.</p>
+            <div class="animation-actions">
+              <button type="button" id="previewAnimationButton" class="secondary">Preview animation</button>
+              <button type="button" id="downloadAnimationButton">Download animation (MP4)</button>
+            </div>
+          </div>
           <div class="field actions">
             <button type="submit" class="primary">Plot route</button>
           </div>
@@ -48,6 +88,15 @@
       </section>
       <section class="map-panel panel">
         <h2>Map preview</h2>
+        <div class="field map-type">
+          <label for="mapTypeSelect">Map style</label>
+          <select id="mapTypeSelect">
+            <option value="roadmap">Default</option>
+            <option value="satellite">Satellite</option>
+            <option value="hybrid">Hybrid</option>
+            <option value="terrain">Terrain</option>
+          </select>
+        </div>
         <div id="map" role="region" aria-label="Route map"></div>
       </section>
     </main>
@@ -55,7 +104,7 @@
     <script
       async
       defer
-      src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBEQXlNW6hW-F_VqL9OVtt3YABfl545MkU&callback=initMap"
+      src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBEQXlNW6hW-F_VqL9OVtt3YABfl545MkU&callback=initMap&libraries=geometry"
     ></script>
   </body>
 </html>
