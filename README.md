@@ -32,6 +32,17 @@ python -m travelmap.main travelmap/examples/sample_trip.json
 
 The resulting video is written to the `output` path defined in your configuration file.
 
+## Browser-based animator
+
+A lightweight web interface is bundled in the [`web/`](web/) directory. Serve the folder with any static file server (for example `python -m http.server` from the repository root) and open `http://localhost:8000/web/` in your browser. The page lets you:
+
+- Load an existing itinerary JSON file that matches the CLI configuration schema.
+- Add or remove waypoints manually and adjust animation settings such as speed, frame rate and pauses.
+- Upload a custom PNG vehicle icon and preview it instantly.
+- Preview the animation directly on the page or record it to a downloadable WebM file using the browser's `MediaRecorder` API.
+
+> **Note:** Downloading animations requires a browser that supports the Canvas `captureStream()` API and the `MediaRecorder` API (Chrome, Edge and Firefox). Safari currently allows previewing but not exporting.
+
 ### Configuration schema
 
 | Field | Type | Description |
