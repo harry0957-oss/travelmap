@@ -30,6 +30,21 @@ const animationControls = {
 const baseAnimationSpeed = 65;
 let animationSpeedMultiplier = 1;
 
+function isEditableElement(element) {
+  if (!element) return false;
+  if (element.isContentEditable) return true;
+
+  const editableSelector = "input, textarea, select, [contenteditable='true']";
+  if (typeof element.closest === "function" && element.closest(editableSelector)) {
+    return true;
+  }
+
+  const tagName = element.tagName;
+  if (!tagName) return false;
+
+  return ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(tagName);
+}
+
 function setStatus(message, type = "info") {
   const statusEl = document.getElementById("routeStatus");
   if (!statusEl) return;
@@ -319,6 +334,25 @@ function initialiseAnimationControls() {
   });
 
   updateAnimationButtons();
+}
+
+function initialiseKeyboardShortcuts() {
+  document.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented) return;
+    const isSpacebar = event.code === "Space" || event.key === " ";
+    if (!isSpacebar) return;
+    if (event.repeat) {
+      event.preventDefault();
+      return;
+    }
+    if (isEditableElement(event.target)) return;
+    if (!animationControls.enableCheckbox?.checked) return;
+    if (!currentRouteSegments.length) return;
+    if (animationState) return;
+
+    event.preventDefault();
+    startRouteAnimation({ record: false });
+  });
 }
 
 function initialiseMapTypeControl() {
@@ -795,6 +829,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initialiseForm();
   initialiseVehicleIconUploads();
   initialiseAnimationControls();
+  initialiseKeyboardShortcuts();
   initialiseMapTypeControl();
 });
 
