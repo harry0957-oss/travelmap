@@ -75,6 +75,15 @@
               <input type="checkbox" id="enableAnimation" checked />
             </div>
             <p class="hint">Preview the vehicle travelling along the calculated route.</p>
+            <label for="animationSpeed" class="animation-speed">
+              <span>Animation speed</span>
+              <select id="animationSpeed">
+                <option value="0.5">0.5× (Leisurely)</option>
+                <option value="1" selected>1× (Normal)</option>
+                <option value="2">2× (Fast)</option>
+                <option value="4">4× (Rapid)</option>
+              </select>
+            </label>
             <div class="animation-actions">
               <button type="button" id="previewAnimationButton" class="secondary">Preview animation</button>
               <button type="button" id="downloadAnimationButton">Download animation (MP4)</button>
