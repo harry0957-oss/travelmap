@@ -1391,6 +1391,147 @@ function createDefaultVehicleIcons() {
   return icons;
 }
 
+let envApiKeyPromise = null;
+
+function extractEnvValue(content, variable) {
+  if (typeof content !== "string" || !variable) {
+    return null;
+  }
+  const lines = content.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const equalsIndex = line.indexOf("=");
+    if (equalsIndex === -1) continue;
+    const key = line.slice(0, equalsIndex).trim();
+    if (key !== variable) continue;
+    let value = line.slice(equalsIndex + 1).trim();
+    if (!value) return "";
+    if (!value.startsWith("\"") && !value.startsWith("'")) {
+      const commentIndex = value.indexOf("#");
+      if (commentIndex !== -1) {
+        value = value.slice(0, commentIndex).trim();
+      }
+    }
+    if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    return value;
+  }
+  return null;
+}
+
+function loadApiKeyFromEnvFile() {
+  if (envApiKeyPromise) {
+    return envApiKeyPromise;
+  }
+  envApiKeyPromise = fetch("./.env", { cache: "no-store" })
+    .then((response) => {
+      if (!response.ok) {
+        return null;
+      }
+      return response.text();
+    })
+    .then((text) => {
+      if (!text) {
+        return null;
+      }
+      const key = extractEnvValue(text, "GOOGLE_MAPS_API_KEY");
+      if (key) {
+        window.GMAPS_API_KEY = key;
+      }
+      return key || null;
+    })
+    .catch((error) => {
+      console.warn("Unable to load Google Maps API key from .env file", error);
+      return null;
+    });
+  return envApiKeyPromise;
+}
+
+async function resolveGoogleMapsApiKey() {
+  try {
+    const url = new URL(window.location.href);
+    const urlKey = url.searchParams.get("key");
+    if (urlKey) {
+      window.GMAPS_API_KEY = urlKey;
+      return urlKey;
+    }
+  } catch (error) {
+    console.warn("Unable to parse window location for API key override", error);
+  }
+
+  if (window.GMAPS_API_KEY && window.GMAPS_API_KEY !== "YOUR_API_KEY") {
+    return window.GMAPS_API_KEY;
+  }
+
+  const envKey = await loadApiKeyFromEnvFile();
+  if (envKey) {
+    return envKey;
+  }
+
+  return null;
+}
+
+async function bootstrapGoogleMaps() {
+  if (!mapReady) {
+    setStatus("Loading map…", "info");
+  }
+
+  try {
+    const apiKey = await resolveGoogleMapsApiKey();
+    if (!apiKey) {
+      setStatus(
+        "Google Maps API key is not configured. Update web/.env with a valid key.",
+        "error"
+      );
+      return;
+    }
+
+    if (window.google?.maps) {
+      return;
+    }
+
+    await new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-google-maps-loader="true"]');
+      if (existing) {
+        if (existing.dataset.loaded === "true") {
+          resolve();
+          return;
+        }
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener(
+          "error",
+          () => reject(new Error("Google Maps script failed to load.")),
+          { once: true }
+        );
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.defer = true;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
+        apiKey
+      )}&callback=initMap&libraries=geometry`;
+      script.dataset.googleMapsLoader = "true";
+      script.addEventListener("load", () => {
+        script.dataset.loaded = "true";
+        resolve();
+      });
+      script.addEventListener("error", () => {
+        reject(new Error("Google Maps script failed to load."));
+      });
+      document.head.appendChild(script);
+    });
+  } catch (error) {
+    console.error("Failed to bootstrap Google Maps", error);
+    setStatus(
+      "Unable to load Google Maps at this time. Check the API key configuration.",
+      "error"
+    );
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const versionElement = document.getElementById("appVersion");
   const version = window.APP_VERSION ?? "dev-build";
@@ -1404,6 +1545,8 @@ document.addEventListener("DOMContentLoaded", () => {
   initialiseAnimationControls();
   initialiseKeyboardShortcuts();
   initialiseMapTypeControl();
+
+  void bootstrapGoogleMaps();
 });
 
 window.initMap = function initMap() {
