@@ -227,6 +227,48 @@ async function openRecorderPopup(routePayload) {
     (function(){
       let payload = null;
 
+      function determineDirection(heading) {
+        if (typeof heading !== 'number' || Number.isNaN(heading)) return 'north';
+        const normalized = ((heading % 360) + 360) % 360;
+        if (normalized >= 45 && normalized < 135) return 'east';
+        if (normalized >= 135 && normalized < 225) return 'south';
+        if (normalized >= 225 && normalized < 315) return 'west';
+        return 'north';
+      }
+
+      function getVehicleIcon(direction) {
+        if (!payload) return null;
+        const icons = payload.vehicleIcons || {};
+        const size = payload.iconSize || { width: 128, height: 64 };
+        const url = icons[direction] || icons.north;
+        if (!url || !window.google || !google.maps) return null;
+        const width = Number(size.width) || 128;
+        const height = Number(size.height) || 64;
+        return {
+          url,
+          size: new google.maps.Size(width, height),
+          scaledSize: new google.maps.Size(width, height),
+          anchor: new google.maps.Point(width / 2, height - 8)
+        };
+      }
+
+      function applyMarkerIcon(marker, heading) {
+        if (!marker) return;
+        const direction = determineDirection(heading);
+        const icon = getVehicleIcon(direction);
+        if (icon) {
+          marker.setIcon(icon);
+        }
+      }
+
+      function applyFallbackIcon(marker) {
+        if (!marker) return;
+        const icon = getVehicleIcon('north');
+        if (icon) {
+          marker.setIcon(icon);
+        }
+      }
+
       window.addEventListener('message', (ev) => {
         if (!ev || !ev.data || ev.data.type !== 'INIT') return;
         payload = ev.data.payload;
@@ -303,8 +345,15 @@ async function openRecorderPopup(routePayload) {
           );
           if (!pts.length) throw new Error('No points to animate');
 
-          const marker = new google.maps.Marker({ map, position: pts[0] });
+          const marker = new google.maps.Marker({ map, position: pts[0], optimized: false });
           map.setCenter(pts[0]);
+
+          if (pts.length > 1 && google.maps && google.maps.geometry && google.maps.geometry.spherical && typeof google.maps.geometry.spherical.computeHeading === 'function') {
+            const initialHeading = google.maps.geometry.spherical.computeHeading(pts[0], pts[1]);
+            applyMarkerIcon(marker, initialHeading);
+          } else {
+            applyFallbackIcon(marker);
+          }
 
           // 3) Start recording (user gesture came from the click in this popup)
           const { rec, chunks, stream, mimeType } = await record();
@@ -316,8 +365,13 @@ async function openRecorderPopup(routePayload) {
               try { rec.requestData?.(); rec.stop(); } catch {}
               return;
             }
-            marker.setPosition(pts[i]);
-            map.panTo(pts[i]);
+            const point = pts[i];
+            if (i > 0 && google.maps && google.maps.geometry && google.maps.geometry.spherical && typeof google.maps.geometry.spherical.computeHeading === 'function') {
+              const heading = google.maps.geometry.spherical.computeHeading(pts[i - 1], point);
+              applyMarkerIcon(marker, heading);
+            }
+            marker.setPosition(point);
+            map.panTo(point);
             i++;
             requestAnimationFrame(tick);
           }
@@ -364,7 +418,30 @@ async function openRecorderPopup(routePayload) {
     }
   }
 
-  win.postMessage({ type: "INIT", payload: { ...routePayload, apiKey } }, "*");
+  const vehicleIconsPayload = {};
+  directionOrder.forEach((direction) => {
+    const icon = customVehicleIcons[direction] ?? defaultVehicleIcons[direction];
+    if (icon) {
+      vehicleIconsPayload[direction] = icon;
+    }
+  });
+  const iconSizePayload = {
+    width: desiredIconSize.width,
+    height: desiredIconSize.height,
+  };
+
+  win.postMessage(
+    {
+      type: "INIT",
+      payload: {
+        ...routePayload,
+        apiKey,
+        vehicleIcons: vehicleIconsPayload,
+        iconSize: iconSizePayload,
+      },
+    },
+    "*"
+  );
 
   win.focus();
   return win;
