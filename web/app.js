@@ -487,13 +487,25 @@ function startRouteAnimation({ record = false } = {}) {
 function centerMapOnPosition(position) {
   if (!map || !position) return;
   const currentCenter = typeof map.getCenter === "function" ? map.getCenter() : null;
-  if (currentCenter && areLatLngEqual(currentCenter, position)) {
+  let shouldCenter = true;
+  if (currentCenter) {
+    if (google.maps.geometry?.spherical?.computeDistanceBetween) {
+      const distance = google.maps.geometry.spherical.computeDistanceBetween(
+        currentCenter,
+        position
+      );
+      shouldCenter = distance > 1; // ≈1 metre threshold to avoid redundant updates
+    } else {
+      shouldCenter = !areLatLngEqual(currentCenter, position);
+    }
+  }
+  if (!shouldCenter) {
     return;
   }
-  if (typeof map.panTo === "function") {
-    map.panTo(position);
-  } else if (typeof map.setCenter === "function") {
+  if (typeof map.setCenter === "function") {
     map.setCenter(position);
+  } else if (typeof map.panTo === "function") {
+    map.panTo(position);
   }
 }
 
@@ -608,8 +620,12 @@ function createAnimationRecorder() {
 
   const chunks = [];
   let resolveStopped;
+  let resolveDataFinished;
   const stopped = new Promise((resolve) => {
     resolveStopped = resolve;
+  });
+  const dataFinished = new Promise((resolve) => {
+    resolveDataFinished = resolve;
   });
   const recorder = new MediaRecorder(stream, {
     mimeType,
@@ -619,16 +635,29 @@ function createAnimationRecorder() {
     if (event.data && event.data.size > 0) {
       chunks.push(event.data);
     }
+    if (recorder.state === "inactive") {
+      resolveDataFinished?.();
+    }
   });
   recorder.addEventListener(
     "stop",
     () => {
       resolveStopped?.();
+      requestAnimationFrame(() => {
+        resolveDataFinished?.();
+      });
     },
     { once: true }
   );
 
-  return { recorder, chunks, mimeType, stopped, stream };
+  return {
+    recorder,
+    chunks,
+    mimeType,
+    stopped,
+    finished: Promise.all([stopped, dataFinished]),
+    stream,
+  };
 }
 
 function finalizeAnimation({
@@ -652,7 +681,7 @@ function finalizeAnimation({
   }
 
   if (recording) {
-    const { recorder, stopped = Promise.resolve(), stream } = recording;
+    const { recorder, stopped = Promise.resolve(), finished = stopped, stream } = recording;
     let hasFinalized = false;
     const finalizeRecording = () => {
       if (hasFinalized) return;
@@ -675,7 +704,7 @@ function finalizeAnimation({
       updateAnimationButtons();
     };
 
-    stopped
+    finished
       .catch((error) => {
         console.error("Recording did not stop cleanly", error);
       })
