@@ -1,0 +1,19 @@
+{
+  "title": "European Adventure",
+  "description": "Example configuration showcasing a short hop between iconic cities.",
+  "speed_kmh": 750,
+  "frame_rate": 24,
+  "pause_at_start": 1.0,
+  "pause_at_end": 2.0,
+  "margin_degrees": 4.0,
+  "vehicle": {
+    "type": "plane"
+  },
+  "waypoints": [
+    {"name": "London", "lat": 51.5074, "lon": -0.1278, "pause": 0.5},
+    {"name": "Paris", "lat": 48.8566, "lon": 2.3522, "pause": 0.5},
+    {"name": "Rome", "lat": 41.9028, "lon": 12.4964, "pause": 0.5},
+    {"name": "Athens", "lat": 37.9838, "lon": 23.7275, "pause": 1.0}
+  ],
+  "output": "output/european_adventure.mp4"
+}
