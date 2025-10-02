@@ -479,7 +479,7 @@ function updateAnimationButtons() {
   }
 }
 
-function startRouteAnimation({ record = false } = {}) {
+async function startRouteAnimation({ record = false } = {}) {
   if (!mapReady) {
     setStatus("The map is not ready yet.", "error");
     return;
@@ -529,11 +529,16 @@ function startRouteAnimation({ record = false } = {}) {
   };
 
   if (record) {
-    const recording = createAnimationRecorder();
+    const recording = await createAnimationRecorder();
     if (!recording) {
-      vehicleMarker.setMap(null);
-      vehicleMarker = null;
-      setStatus("Animation recording isn't supported in this browser.", "error");
+      if (vehicleMarker) {
+        vehicleMarker.setMap(null);
+        vehicleMarker = null;
+      }
+      setStatus(
+        "Recording isn’t available (canvas capture failed and display capture was denied).",
+        "error"
+      );
       updateAnimationButtons();
       return;
     }
@@ -542,11 +547,6 @@ function startRouteAnimation({ record = false } = {}) {
     try {
       const { message, type } = getRecordingStatusDetails();
       showRecordingIndicator(message, type);
-      if (typeof recording.start === "function") {
-        recording.start();
-      } else {
-        recording.recorder.start();
-      }
     } catch (error) {
       console.error("Unable to start recording", error);
       isRecordingInProgress = false;
@@ -562,13 +562,10 @@ function startRouteAnimation({ record = false } = {}) {
   }
 
   animationState = state;
-  if (record) {
-    const { message, type } = getRecordingStatusDetails();
-    setStatus(message, type);
-  } else {
+  if (!record) {
     hideRecordingIndicator();
-    setStatus("Animation started.", "info");
   }
+  setStatus(record ? "Recording animation…" : "Animation started.", "info");
   updateAnimationButtons();
 
   const step = (timestamp) => {
@@ -718,175 +715,143 @@ function updateVehicleMarkerIcon(direction, offsets = { bounce: 0, sway: 0 }) {
   vehicleMarker.setIcon(getVehicleIcon(direction, offsets));
 }
 
-function createAnimationRecorder() {
-  if (typeof MediaRecorder === "undefined") {
-    return null;
-  }
+async function createAnimationRecorder() {
+  if (typeof MediaRecorder === "undefined") return null;
 
   const mapElement = document.getElementById("map");
   if (!mapElement) return null;
 
-  const visibleCanvases = Array.from(mapElement.querySelectorAll("canvas"))
-    .filter((candidate) => {
-      if (!candidate) return false;
-      const rect = candidate.getBoundingClientRect();
-      if (!rect || rect.width === 0 || rect.height === 0) {
-        return false;
-      }
-      const style = window.getComputedStyle(candidate);
-      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
-        return false;
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      const rectA = a.getBoundingClientRect();
-      const rectB = b.getBoundingClientRect();
-      const areaA = rectA.width * rectA.height;
-      const areaB = rectB.width * rectB.height;
-      return areaB - areaA;
-    });
+  const canvas = Array.from(mapElement.querySelectorAll("canvas")).find((c) => {
+    if (!c) return false;
+    const r = c.getBoundingClientRect();
+    if (!r || r.width === 0 || r.height === 0) return false;
+    const s = getComputedStyle(c);
+    return !(s.display === "none" || s.visibility === "hidden" || s.opacity === "0");
+  });
 
-  const captureCandidates = [];
-  captureCandidates.push(mapElement);
-  captureCandidates.push(...visibleCanvases);
-
-  let stream = null;
-  let sourceElement = null;
-  const stopStream = (candidateStream) => {
-    candidateStream?.getTracks?.().forEach((track) => track.stop());
-  };
-
-  for (const candidate of captureCandidates) {
-    if (!candidate) continue;
-    const captureStreamFn = candidate.captureStream ?? candidate.mozCaptureStream;
-    if (typeof captureStreamFn !== "function") {
-      continue;
-    }
-    let candidateStream;
-    try {
-      candidateStream = captureStreamFn.call(candidate, 60);
-    } catch (error) {
-      console.warn("Unable to capture stream from candidate element", error);
-      continue;
-    }
-    if (!candidateStream) {
-      continue;
-    }
-    const videoTracks = candidateStream.getVideoTracks?.() ?? [];
-    if (!videoTracks.length) {
-      stopStream(candidateStream);
-      continue;
-    }
-    stream = candidateStream;
-    sourceElement = candidate;
-    break;
-  }
-
-  if (!stream) {
-    return null;
-  }
-
-  const preferredTypes = [
+  const mimeCandidates = [
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
     "video/webm",
   ];
   let mimeType = null;
-  for (const type of preferredTypes) {
-    if (MediaRecorder.isTypeSupported?.(type)) {
-      mimeType = type;
+  for (const t of mimeCandidates) {
+    if (MediaRecorder.isTypeSupported?.(t)) {
+      mimeType = t;
       break;
     }
   }
-  if (!mimeType) {
-    stopStream(stream);
-    return null;
-  }
+  if (!mimeType) return null;
 
-  const chunks = [];
-  let hasData = false;
-  let resolveStopped;
-  let resolveDataFinished;
-  let resolveFirstChunk;
-  let dataKickTimeout = null;
-  const stopped = new Promise((resolve) => {
-    resolveStopped = resolve;
-  });
-  const dataFinished = new Promise((resolve) => {
-    resolveDataFinished = resolve;
-  });
-  const firstChunkCaptured = new Promise((resolve) => {
-    resolveFirstChunk = resolve;
-  });
-
-  let recorder;
-  try {
-    recorder = new MediaRecorder(stream, {
+  const makeRecorder = (stream) => {
+    const chunks = [];
+    let resolveStopped,
+      resolveDataFinished;
+    const stopped = new Promise((r) => (resolveStopped = r));
+    const dataFinished = new Promise((r) => (resolveDataFinished = r));
+    const recorder = new MediaRecorder(stream, {
       mimeType,
       videoBitsPerSecond: 5_000_000,
     });
+
+    recorder.addEventListener("dataavailable", (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+      if (recorder.state === "inactive") resolveDataFinished?.();
+    });
+    recorder.addEventListener(
+      "stop",
+      () => {
+        resolveStopped?.();
+        requestAnimationFrame(() => resolveDataFinished?.());
+      },
+      { once: true }
+    );
+
+    return {
+      recorder,
+      chunks,
+      mimeType,
+      stopped,
+      finished: Promise.all([stopped, dataFinished]),
+      stream,
+    };
+  };
+
+  let stream = null;
+  if (canvas && typeof canvas.captureStream === "function") {
+    try {
+      stream = canvas.captureStream(60);
+    } catch (error) {
+      console.warn("Canvas capture failed", error);
+    }
+  }
+  if (stream && (stream.getVideoTracks?.().length ?? 0) === 0) {
+    stream.getTracks?.().forEach((t) => t.stop());
+    stream = null;
+  }
+
+  const getDisplayStream = async () => {
+    try {
+      return await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 60, displaySurface: "browser" },
+        audio: false,
+      });
+    } catch (error) {
+      console.warn("Display capture denied", error);
+      return null;
+    }
+  };
+
+  if (!stream) {
+    const ds = await getDisplayStream();
+    if (!ds) return null;
+    const rec = makeRecorder(ds);
+    try {
+      rec.recorder.start(500);
+    } catch (error) {
+      console.error("Unable to start display recorder", error);
+      ds.getTracks?.().forEach((t) => t.stop());
+      return null;
+    }
+    return rec;
+  }
+
+  const rec = makeRecorder(stream);
+  let gotData = false;
+  const onFirstData = () => {
+    gotData = true;
+  };
+  rec.recorder.addEventListener("dataavailable", onFirstData, { once: true });
+  try {
+    rec.recorder.start(500);
   } catch (error) {
-    console.error("Unable to create MediaRecorder", error);
-    stopStream(stream);
+    console.error("Unable to start canvas recorder", error);
+    stream.getTracks?.().forEach((t) => t.stop());
     return null;
   }
 
-  recorder.addEventListener("start", () => {
-    if (dataKickTimeout) {
-      clearTimeout(dataKickTimeout);
-    }
-    dataKickTimeout = window.setTimeout(() => {
-      if (!hasData && typeof recorder.requestData === "function" && recorder.state !== "inactive") {
-        try {
-          recorder.requestData();
-        } catch (error) {
-          console.warn("Unable to request interim recording data", error);
-        }
-      }
-    }, 2_000);
-  });
+  await new Promise((r) => setTimeout(r, 2000));
+  if (gotData) {
+    return rec;
+  }
 
-  recorder.addEventListener("dataavailable", (event) => {
-    if (event.data && event.data.size > 0) {
-      chunks.push(event.data);
-      hasData = true;
-      resolveFirstChunk?.();
-    }
-    if (recorder.state === "inactive") {
-      resolveDataFinished?.();
-    }
-  });
-
-  recorder.addEventListener(
-    "stop",
-    () => {
-      resolveStopped?.();
-      requestAnimationFrame(() => {
-        resolveDataFinished?.();
-      });
-      if (dataKickTimeout) {
-        clearTimeout(dataKickTimeout);
-        dataKickTimeout = null;
-      }
-    },
-    { once: true }
-  );
-
-  return {
-    recorder,
-    start(timeslice = 1_000) {
-      recorder.start(timeslice);
-    },
-    chunks,
-    mimeType,
-    stopped,
-    finished: Promise.all([stopped, dataFinished]),
-    stream,
-    sourceElement,
-    hasData: () => hasData,
-    firstChunk: firstChunkCaptured,
-  };
+  try {
+    rec.recorder.stop();
+  } catch (error) {
+    console.warn("Stopping canvas recorder failed", error);
+  }
+  rec.stream.getTracks?.().forEach((t) => t.stop());
+  const ds = await getDisplayStream();
+  if (!ds) return null;
+  const rec2 = makeRecorder(ds);
+  try {
+    rec2.recorder.start(500);
+  } catch (error) {
+    console.error("Unable to start display recorder", error);
+    ds.getTracks?.().forEach((t) => t.stop());
+    return null;
+  }
+  return rec2;
 }
 
 function finalizeAnimation({
@@ -920,10 +885,7 @@ function finalizeAnimation({
         if (recording.chunks.length) {
           saveRecording(recording);
         } else {
-          console.error(
-            "MediaRecorder finished without delivering any data chunks.",
-            recording.sourceElement
-          );
+          console.error("MediaRecorder finished without delivering any data chunks.");
           setStatus(
             "No animation data reached the recorder. Keep this tab visible and consider using your browser's screen recording (MediaDevices.getDisplayMedia) as a fallback.",
             "error"
@@ -937,29 +899,10 @@ function finalizeAnimation({
       updateAnimationButtons();
     };
 
-    const waitForRecordingData = recording.firstChunk
-      ? new Promise((resolve) => {
-          let settled = false;
-          const finish = () => {
-            if (settled) return;
-            settled = true;
-            resolve();
-          };
-          const timeoutId = setTimeout(finish, 500);
-          recording.firstChunk
-            .then(finish)
-            .catch(finish)
-            .finally(() => {
-              clearTimeout(timeoutId);
-            });
-        })
-      : Promise.resolve();
-
     finished
       .catch((error) => {
         console.error("Recording did not stop cleanly", error);
       })
-      .then(() => waitForRecordingData)
       .then(() => {
         finalizeRecording();
       });
