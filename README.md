@@ -34,7 +34,7 @@ The resulting video is written to the `output` path defined in your configuratio
 
 ## Browser-based animator
 
-A lightweight web interface is bundled in the [`web/`](web/) directory. Serve the folder with any static file server (for example `python -m http.server` from the repository root) and open `http://localhost:8000/web/` in your browser. Configure your Google Maps access by setting `GOOGLE_MAPS_API_KEY` inside [`web/.env`](web/.env). The page lets you:
+A lightweight web interface is bundled in the [`web/`](web/) directory. Serve the folder with any static file server (for example `python -m http.server` from the repository root) and open `http://localhost:8000/web/` in your browser. Configure your Google Maps access by either exposing a [`web/.env`](web/.env) file or, for hosts that block dotfiles (such as GitHub Pages), by updating [`web/config.js`](web/config.js) to set `window.GMAPS_API_KEY` with your key before deploying. The page lets you:
 
 - Load an existing itinerary JSON file that matches the CLI configuration schema.
 - Add or remove waypoints manually and adjust animation settings such as speed, frame rate and pauses.
