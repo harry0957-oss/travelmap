@@ -30,6 +30,20 @@ header p {
   opacity: 0.85;
 }
 
+.version-label {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.version-label span {
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Consolas, monospace;
+  background: rgba(7, 17, 27, 0.55);
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.45rem;
+  border: 1px solid rgba(140, 175, 220, 0.35);
+}
+
 main {
   display: grid;
   gap: 1.5rem;
