@@ -4,7 +4,7 @@
     window.GMAPS_API_KEY = placeholderKey;
   }
 
-  if (window.GMAPS_API_KEY === placeholderKey) {
+  if (window.GMAPS_API_KEY === AIzaSyCEjHTmqVn-72tx1XHcDatsLIRBW8Xeamw) {
     console.warn(
       "Update web/config.js with your Google Maps API key before deploying to production."
     );
