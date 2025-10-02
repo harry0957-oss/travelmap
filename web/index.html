@@ -3,152 +3,59 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Travel Map Animator (Web)</title>
+    <title>Travel Map Planner</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <header>
-      <h1>Travel Map Animator (Web)</h1>
+      <h1>Travel Map Planner</h1>
       <p>
-        Upload a route configuration, customise the icon and export a browser-generated
-        animation of your journey.
+        Plan your journey by entering a start point, any number of waypoints and a final
+        destination. Routes are rendered with Google Maps for accurate turn-by-turn
+        directions.
       </p>
     </header>
     <main>
       <section class="controls">
-        <div class="panel">
-          <h2>Configuration</h2>
-          <label class="field">
-            <span>Configuration JSON</span>
-            <input type="file" id="configUpload" accept="application/json" />
-          </label>
+        <form id="routeForm" class="panel" autocomplete="off">
+          <h2>Route configuration</h2>
           <div class="field">
-            <label>
-              <span>Title</span>
-              <input type="text" id="titleInput" placeholder="My Adventure" />
-            </label>
-            <label>
-              <span>Speed (km/h)</span>
-              <input type="number" id="speedInput" value="80" min="1" />
-            </label>
-          </div>
-          <div class="field">
-            <label>
-              <span>Frame rate (fps)</span>
-              <input type="number" id="frameRateInput" value="30" min="1" max="60" />
-            </label>
-            <label>
-              <span>Start pause (s)</span>
-              <input type="number" id="startPauseInput" value="1" min="0" step="0.1" />
-            </label>
-            <label>
-              <span>End pause (s)</span>
-              <input type="number" id="endPauseInput" value="1" min="0" step="0.1" />
-            </label>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>Map options</h2>
-          <label class="field">
-            <span>Import background map</span>
+            <label for="startInput">Start location</label>
             <input
-              type="file"
-              id="mapUpload"
-              accept="image/png, image/jpeg, image/webp, image/svg+xml"
+              type="text"
+              id="startInput"
+              placeholder="e.g. San Francisco, CA"
+              required
             />
-          </label>
-          <div class="field button-row">
-            <button type="button" id="resetMapButton" class="secondary">Use default map</button>
-            <button type="button" id="toggleDrawRoute" class="secondary outline">Start drawing route</button>
-            <button type="button" id="clearRouteButton" class="secondary subtle">Clear drawn route</button>
           </div>
-          <p class="hint">
-            Upload a custom background image or sketch an approximate route directly on the
-            canvas to follow motorways and other preferred roads.
-          </p>
-        </div>
-
-        <div class="panel">
-          <h2>Vehicle icon</h2>
-          <label class="field">
-            <span>Upload PNG icon</span>
-            <input type="file" id="iconUpload" accept="image/png" />
-          </label>
-          <canvas id="iconPreview" width="96" height="96" aria-label="Icon preview"></canvas>
-          <p class="hint">A default coloured circle will be used if no icon is supplied.</p>
-        </div>
-
-        <div class="panel">
-          <h2>Waypoints</h2>
-          <form id="waypointForm">
-            <div class="field">
-              <label>
-                <span>City or town</span>
-                <input
-                  type="text"
-                  id="cityInput"
-                  list="cityOptions"
-                  placeholder="Start typing e.g. London"
-                  autocomplete="off"
-                  required
-                />
-              </label>
-              <label>
-                <span>Pause (s)</span>
-                <input type="number" id="waypointPause" step="0.1" min="0" value="1" />
-              </label>
-              <button type="submit" class="add">Add stop</button>
+          <div class="field">
+            <div class="field-header">
+              <label for="waypointsContainer">Waypoints (optional)</label>
+              <button type="button" id="addWaypointButton" class="secondary">Add waypoint</button>
             </div>
-            <p class="hint">Cities are sourced from the bundled CSV of major towns and metropolitan areas.</p>
-          </form>
-          <datalist id="cityOptions"></datalist>
-          <table id="waypointTable" aria-label="Configured waypoints">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>City / Town</th>
-                <th>Country</th>
-                <th>Latitude</th>
-                <th>Longitude</th>
-                <th>Pause (s)</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-
-        <div class="panel actions">
-          <button id="previewButton" class="primary">Preview animation</button>
-          <button id="downloadButton" class="secondary">Download animation</button>
-        </div>
+            <div id="waypointsContainer" class="waypoints"></div>
+            <p class="hint">Enter stops between your start and final destination.</p>
+          </div>
+          <div class="field">
+            <label for="endInput">End location</label>
+            <input type="text" id="endInput" placeholder="e.g. Los Angeles, CA" required />
+          </div>
+          <div class="field actions">
+            <button type="submit" class="primary">Plot route</button>
+          </div>
+          <div id="routeStatus" class="status" role="status" aria-live="polite"></div>
+        </form>
       </section>
-
-      <section class="preview">
-        <div class="canvas-wrapper">
-          <canvas id="mapCanvas" width="960" height="540" aria-label="Map animation preview"></canvas>
-        </div>
-        <div id="drawModeHint" class="draw-mode-hint" hidden>
-          Drawing mode enabled – click and drag on the map to sketch the route, double-click to finish.
-        </div>
-        <video id="downloadPreview" controls hidden></video>
-        <div class="status" id="status"></div>
+      <section class="map-panel panel">
+        <h2>Map preview</h2>
+        <div id="map" role="region" aria-label="Route map"></div>
       </section>
     </main>
-
-    <template id="waypointRowTemplate">
-      <tr>
-        <td class="index"></td>
-        <td class="name"></td>
-        <td class="country"></td>
-        <td class="lat"></td>
-        <td class="lon"></td>
-        <td class="pause"></td>
-        <td><button type="button" class="remove">Remove</button></td>
-      </tr>
-    </template>
-
     <script src="app.js"></script>
+    <script
+      async
+      defer
+      src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBEQXlNW6hW-F_VqL9OVtt3YABfl545MkU&callback=initMap"
+    ></script>
   </body>
 </html>
