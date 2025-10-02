@@ -383,6 +383,7 @@ function startRouteAnimation({ record = false } = {}) {
     optimized: false,
     zIndex: 1000,
   });
+  centerMapOnPosition(firstSegment.start);
 
   const state = {
     segments: currentRouteSegments,
@@ -441,7 +442,10 @@ function startRouteAnimation({ record = false } = {}) {
     const bounce = Math.sin(animationState.motionElapsed * 1.5) * 2.5;
     const sway = Math.sin(animationState.motionElapsed * 1.1 + Math.PI / 6) * 1.8;
     animationState.motionOffsets = { bounce, sway };
-    updateVehicleMarkerIcon(animationState.currentDirection, animationState.motionOffsets);
+    updateVehicleMarkerIcon(
+      animationState.currentDirection,
+      animationState.motionOffsets
+    );
     let distanceToTravel = deltaSeconds * animationState.speed;
 
     while (distanceToTravel > 0 && animationState.segmentIndex < animationState.segments.length) {
@@ -453,6 +457,7 @@ function startRouteAnimation({ record = false } = {}) {
         animationState.distanceIntoSegment = 0;
         if (animationState.segmentIndex >= animationState.segments.length) {
           vehicleMarker.setPosition(segment.end);
+          centerMapOnPosition(segment.end);
           finalizeAnimation({ statusMessage: "Animation complete.", statusType: "success" });
           return;
         }
@@ -471,11 +476,25 @@ function startRouteAnimation({ record = false } = {}) {
       const fraction = segment.length === 0 ? 0 : animationState.distanceIntoSegment / segment.length;
       const position = interpolatePosition(segment.start, segment.end, fraction);
       vehicleMarker.setPosition(position);
+      centerMapOnPosition(position);
       animationState.frameId = requestAnimationFrame(step);
     }
   };
 
   animationState.frameId = requestAnimationFrame(step);
+}
+
+function centerMapOnPosition(position) {
+  if (!map || !position) return;
+  const currentCenter = typeof map.getCenter === "function" ? map.getCenter() : null;
+  if (currentCenter && areLatLngEqual(currentCenter, position)) {
+    return;
+  }
+  if (typeof map.panTo === "function") {
+    map.panTo(position);
+  } else if (typeof map.setCenter === "function") {
+    map.setCenter(position);
+  }
 }
 
 function buildRouteSegments(path) {
@@ -552,15 +571,29 @@ function createAnimationRecorder() {
   if (!mapElement) return null;
   const canvas = mapElement.querySelector("canvas");
   const sourceElement = canvas ?? mapElement;
-  if (typeof sourceElement.captureStream !== "function") {
+  const captureStream =
+    sourceElement.captureStream ?? sourceElement.mozCaptureStream ?? null;
+  if (typeof captureStream !== "function") {
     return null;
   }
 
-  const stream = sourceElement.captureStream(60);
+  let stream;
+  try {
+    stream = captureStream.call(sourceElement, 60);
+  } catch (error) {
+    console.error("Unable to capture map stream", error);
+    return null;
+  }
+  if (!stream) {
+    return null;
+  }
   const preferredTypes = [
     "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
     "video/mp4;codecs=h264,aac",
     "video/mp4",
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
   ];
   let mimeType = null;
   for (const type of preferredTypes) {
@@ -641,7 +674,8 @@ function saveRecording(recording) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `travelmap-animation-${Date.now()}.mp4`;
+  const extension = recording.mimeType.includes("mp4") ? "mp4" : "webm";
+  link.download = `travelmap-animation-${Date.now()}.${extension}`;
   document.body.appendChild(link);
   link.click();
   requestAnimationFrame(() => {
