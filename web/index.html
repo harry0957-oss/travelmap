@@ -49,6 +49,27 @@
         </div>
 
         <div class="panel">
+          <h2>Map options</h2>
+          <label class="field">
+            <span>Import background map</span>
+            <input
+              type="file"
+              id="mapUpload"
+              accept="image/png, image/jpeg, image/webp, image/svg+xml"
+            />
+          </label>
+          <div class="field button-row">
+            <button type="button" id="resetMapButton" class="secondary">Use default map</button>
+            <button type="button" id="toggleDrawRoute" class="secondary outline">Start drawing route</button>
+            <button type="button" id="clearRouteButton" class="secondary subtle">Clear drawn route</button>
+          </div>
+          <p class="hint">
+            Upload a custom background image or sketch an approximate route directly on the
+            canvas to follow motorways and other preferred roads.
+          </p>
+        </div>
+
+        <div class="panel">
           <h2>Vehicle icon</h2>
           <label class="field">
             <span>Upload PNG icon</span>
@@ -63,16 +84,15 @@
           <form id="waypointForm">
             <div class="field">
               <label>
-                <span>Name</span>
-                <input type="text" id="waypointName" required />
-              </label>
-              <label>
-                <span>Latitude</span>
-                <input type="number" id="waypointLat" step="0.0001" min="-90" max="90" required />
-              </label>
-              <label>
-                <span>Longitude</span>
-                <input type="number" id="waypointLon" step="0.0001" min="-180" max="180" required />
+                <span>City or town</span>
+                <input
+                  type="text"
+                  id="cityInput"
+                  list="cityOptions"
+                  placeholder="Start typing e.g. London"
+                  autocomplete="off"
+                  required
+                />
               </label>
               <label>
                 <span>Pause (s)</span>
@@ -80,12 +100,15 @@
               </label>
               <button type="submit" class="add">Add stop</button>
             </div>
+            <p class="hint">Cities are sourced from the bundled CSV of major towns and metropolitan areas.</p>
           </form>
+          <datalist id="cityOptions"></datalist>
           <table id="waypointTable" aria-label="Configured waypoints">
             <thead>
               <tr>
                 <th>#</th>
-                <th>Name</th>
+                <th>City / Town</th>
+                <th>Country</th>
                 <th>Latitude</th>
                 <th>Longitude</th>
                 <th>Pause (s)</th>
@@ -106,6 +129,9 @@
         <div class="canvas-wrapper">
           <canvas id="mapCanvas" width="960" height="540" aria-label="Map animation preview"></canvas>
         </div>
+        <div id="drawModeHint" class="draw-mode-hint" hidden>
+          Drawing mode enabled – click and drag on the map to sketch the route, double-click to finish.
+        </div>
         <video id="downloadPreview" controls hidden></video>
         <div class="status" id="status"></div>
       </section>
@@ -115,6 +141,7 @@
       <tr>
         <td class="index"></td>
         <td class="name"></td>
+        <td class="country"></td>
         <td class="lat"></td>
         <td class="lon"></td>
         <td class="pause"></td>
