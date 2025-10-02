@@ -185,13 +185,33 @@ button.remove-waypoint {
 }
 
 .icon-upload img {
-  width: 64px;
-  height: 128px;
+  width: 128px;
+  height: 64px;
   object-fit: contain;
   justify-self: center;
   border-radius: 6px;
   background: rgba(12, 26, 42, 0.65);
   box-shadow: inset 0 0 0 1px rgba(83, 169, 255, 0.3);
+  transform-origin: center;
+  animation: vehicle-drive 4s ease-in-out infinite;
+}
+
+@keyframes vehicle-drive {
+  0% {
+    transform: translateY(0) rotate(0deg);
+  }
+  20% {
+    transform: translateY(-3px) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(0) rotate(1deg);
+  }
+  80% {
+    transform: translateY(2px) rotate(-0.5deg);
+  }
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
 }
 
 .animation-actions {
