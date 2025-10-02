@@ -252,14 +252,23 @@ class TravelMapAnimator:
         output_path = Path(self.config.output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with imageio.get_writer(
-            output_path,
-            fps=self.config.frame_rate,
-            codec="libx264",
-            format="FFMPEG",
-            macro_block_size=None,
-            quality=8,
-        ) as writer:
+        try:
+            writer_ctx = imageio.get_writer(
+                output_path,
+                fps=self.config.frame_rate,
+                codec="libx264",
+                format="FFMPEG",
+                macro_block_size=None,
+                quality=8,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "FFMPEG support is required to export videos. Install the "
+                "'imageio-ffmpeg' package (for example via 'pip install "
+                "imageio-ffmpeg') and try again."
+            ) from exc
+
+        with writer_ctx as writer:
             for frame in self._frame_states:
                 self._draw_frame(frame)
                 self._fig.canvas.draw()
