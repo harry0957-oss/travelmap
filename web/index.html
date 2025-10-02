@@ -138,6 +138,13 @@
     <script>
       (function () {
         const version = window.APP_VERSION || new Date().toISOString();
+        const configSrc = `config.js?v=${encodeURIComponent(version)}`;
+        document.write(`<script src="${configSrc}" data-config-loader="true"><\\/script>`);
+      })();
+    </script>
+    <script>
+      (function () {
+        const version = window.APP_VERSION || new Date().toISOString();
         const versionElement = document.getElementById("appVersion");
         if (versionElement) {
           versionElement.textContent = version;
