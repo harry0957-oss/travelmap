@@ -24,7 +24,11 @@ const animationControls = {
   enableCheckbox: null,
   previewButton: null,
   downloadButton: null,
+  speedSelect: null,
 };
+
+const baseAnimationSpeed = 65;
+let animationSpeedMultiplier = 1;
 
 function setStatus(message, type = "info") {
   const statusEl = document.getElementById("routeStatus");
@@ -133,9 +137,34 @@ function updateRouteSegments(result) {
     return;
   }
 
-  const path = route.overview_path ?? [];
+  const path = extractRoutePath(route);
   currentRouteSegments = buildRouteSegments(path);
   updateAnimationButtons();
+}
+
+function extractRoutePath(route) {
+  const detailedPath = [];
+  const legs = route?.legs ?? [];
+
+  legs.forEach((leg) => {
+    const steps = leg?.steps ?? [];
+    steps.forEach((step) => {
+      const stepPath = step?.path ?? [];
+      stepPath.forEach((point) => {
+        if (!point) return;
+        const lastPoint = detailedPath[detailedPath.length - 1];
+        if (!lastPoint || !areLatLngEqual(lastPoint, point)) {
+          detailedPath.push(point);
+        }
+      });
+    });
+  });
+
+  if (detailedPath.length > 1) {
+    return detailedPath;
+  }
+
+  return route?.overview_path ?? [];
 }
 
 function initialiseForm() {
@@ -246,6 +275,19 @@ function initialiseAnimationControls() {
   animationControls.enableCheckbox = document.getElementById("enableAnimation");
   animationControls.previewButton = document.getElementById("previewAnimationButton");
   animationControls.downloadButton = document.getElementById("downloadAnimationButton");
+  animationControls.speedSelect = document.getElementById("animationSpeed");
+
+  if (animationControls.speedSelect) {
+    const selectedValue = Number(animationControls.speedSelect.value);
+    animationSpeedMultiplier = Number.isFinite(selectedValue) && selectedValue > 0 ? selectedValue : 1;
+    animationControls.speedSelect.addEventListener("change", () => {
+      const newValue = Number(animationControls.speedSelect.value);
+      animationSpeedMultiplier = Number.isFinite(newValue) && newValue > 0 ? newValue : 1;
+      if (animationState) {
+        animationState.speed = baseAnimationSpeed * animationSpeedMultiplier;
+      }
+    });
+  }
 
   animationControls.enableCheckbox?.addEventListener("change", () => {
     if (!animationControls.enableCheckbox.checked) {
@@ -346,7 +388,7 @@ function startRouteAnimation({ record = false } = {}) {
     segments: currentRouteSegments,
     segmentIndex: 0,
     distanceIntoSegment: 0,
-    speed: 65,
+    speed: baseAnimationSpeed * animationSpeedMultiplier,
     lastTimestamp: null,
     frameId: null,
     currentDirection: initialDirection,
@@ -470,6 +512,18 @@ function interpolatePosition(start, end, fraction) {
   const lat = start.lat() + (end.lat() - start.lat()) * fraction;
   const lng = start.lng() + (end.lng() - start.lng()) * fraction;
   return new google.maps.LatLng(lat, lng);
+}
+
+function areLatLngEqual(a, b) {
+  if (!a || !b) return false;
+  if (typeof a.equals === "function") {
+    return a.equals(b);
+  }
+  const latA = typeof a.lat === "function" ? a.lat() : a.lat;
+  const lngA = typeof a.lng === "function" ? a.lng() : a.lng;
+  const latB = typeof b.lat === "function" ? b.lat() : b.lat;
+  const lngB = typeof b.lng === "function" ? b.lng() : b.lng;
+  return Math.abs(latA - latB) < 1e-10 && Math.abs(lngA - lngB) < 1e-10;
 }
 
 function getVehicleIcon(direction, { bounce = 0, sway = 0 } = {}) {
