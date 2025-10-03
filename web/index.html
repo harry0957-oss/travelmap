@@ -138,20 +138,29 @@
     <script>
       (function () {
         const version = window.APP_VERSION || new Date().toISOString();
-        const configSrc = `config.js?v=${encodeURIComponent(version)}`;
-        document.write(`<script src="${configSrc}" data-config-loader="true"><\\/script>`);
-      })();
-    </script>
-    <script>
-      (function () {
-        const version = window.APP_VERSION || new Date().toISOString();
         const versionElement = document.getElementById("appVersion");
         if (versionElement) {
           versionElement.textContent = version;
         }
 
-        const scriptSrc = `app.js?v=${encodeURIComponent(version)}`;
-        document.write(`<script src="${scriptSrc}"><\/script>`);
+        const loadScript = (src) => {
+          const script = document.createElement("script");
+          script.src = src;
+          script.defer = true;
+          script.async = false;
+          return script;
+        };
+
+        const loadAppScript = () => {
+          const appScript = loadScript(`app.js?v=${encodeURIComponent(version)}`);
+          document.head.appendChild(appScript);
+        };
+
+        const configScript = loadScript(`config.js?v=${encodeURIComponent(version)}`);
+        configScript.dataset.configLoader = "true";
+        configScript.addEventListener("load", loadAppScript, { once: true });
+        configScript.addEventListener("error", loadAppScript, { once: true });
+        document.head.appendChild(configScript);
       })();
     </script>
   </body>
