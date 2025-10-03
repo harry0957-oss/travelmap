@@ -7,7 +7,9 @@
   "pause_at_end": 2.0,
   "margin_degrees": 4.0,
   "vehicle": {
-    "type": "plane"
+    "type": "plane",
+    "mpg": 0.2,
+    "fuel_price": 5.25
   },
   "waypoints": [
     {"name": "London", "lat": 51.5074, "lon": -0.1278, "pause": 0.5},
@@ -15,5 +17,6 @@
     {"name": "Rome", "lat": 41.9028, "lon": 12.4964, "pause": 0.5},
     {"name": "Athens", "lat": 37.9838, "lon": 23.7275, "pause": 1.0}
   ],
-  "output": "output/european_adventure.webm"
+  "output": "output/european_adventure.webm",
+  "currency_symbol": "€"
 }
