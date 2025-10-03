@@ -58,9 +58,9 @@ A lightweight web interface is bundled in the [`web/`](web/) directory. Serve th
 | `vehicle.icon` | string | Optional path to a custom PNG icon. Icons are rotated to match the current bearing. |
 | `vehicle.icon_scale` | number | Relative scaling factor applied to the icon. |
 | `vehicle.mpg` / `vehicle.fuel_efficiency_mpg` | number | Optional vehicle efficiency in miles-per-gallon used for fuel estimates. |
-| `vehicle.fuel_price` / `vehicle.fuel_price_per_gallon` | number | Optional default fuel price per gallon for the itinerary. |
+| `vehicle.fuel_price` / `vehicle.fuel_price_per_litre` | number | Optional default fuel price per litre for the itinerary. Use `fuel_price_per_litre` for new configs; legacy `fuel_price` / `fuel_price_per_gallon` values are converted automatically. |
 | `waypoints` | list | Ordered list of stop dictionaries containing `name`, `lat`, `lon` and optional `pause` seconds. |
-| `waypoints[].fuel_price` / `waypoints[].fuel_price_per_gallon` | number | Optional override fuel price for legs that depart from the waypoint. |
+| `waypoints[].fuel_price` / `waypoints[].fuel_price_per_litre` | number | Optional override fuel price per litre for legs that depart from the waypoint (legacy gallon values remain supported). |
 | `output` | string | MP4 path to write (parent directories are created automatically). |
 | `currency_symbol` | string | Optional currency symbol used when displaying estimated fuel costs (default `$`). |
 | `summary_display_seconds` | number | Duration in seconds to display the end-of-trip mileage and fuel summary (default `2.0`). |

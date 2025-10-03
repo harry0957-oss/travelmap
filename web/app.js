@@ -22,6 +22,7 @@ const previousTripsStorageKey = "travelmap.previousTrips.v1";
 const fuelSettingsStorageKey = "travelmap.fuelSettings.v1";
 
 const defaultCurrencySymbol = "$";
+const LITRES_PER_GALLON = 3.785411784;
 const routeSummaryPlaceholderText =
   "Plot a route to see the distance, duration and estimated fuel usage for your journey.";
 
@@ -45,7 +46,7 @@ const animationControls = {
 
 const fuelSettings = {
   efficiencyMpg: null,
-  pricePerGallon: null,
+  pricePerLitre: null,
   currencySymbol: defaultCurrencySymbol,
 };
 
@@ -183,7 +184,13 @@ function loadStoredFuelSettings() {
       return;
     }
     fuelSettings.efficiencyMpg = parsePositiveNumber(data.efficiencyMpg);
-    fuelSettings.pricePerGallon = parsePositiveNumber(data.pricePerGallon);
+    const storedPricePerLitre = parsePositiveNumber(data.pricePerLitre);
+    const storedPricePerGallon = parsePositiveNumber(data.pricePerGallon);
+    let pricePerLitre = storedPricePerLitre;
+    if (pricePerLitre === null && storedPricePerGallon !== null) {
+      pricePerLitre = storedPricePerGallon / LITRES_PER_GALLON;
+    }
+    fuelSettings.pricePerLitre = pricePerLitre;
     const symbol = sanitiseCurrencySymbol(data.currencySymbol);
     fuelSettings.currencySymbol = symbol || defaultCurrencySymbol;
   } catch (error) {
@@ -198,7 +205,7 @@ function persistFuelSettings() {
   try {
     const payload = {
       efficiencyMpg: fuelSettings.efficiencyMpg,
-      pricePerGallon: fuelSettings.pricePerGallon,
+      pricePerLitre: fuelSettings.pricePerLitre,
       currencySymbol: fuelSettings.currencySymbol,
     };
     window.localStorage.setItem(fuelSettingsStorageKey, JSON.stringify(payload));
@@ -216,8 +223,8 @@ function applyFuelSettingsToInputs() {
   }
   if (fuelInputs.price) {
     fuelInputs.price.value =
-      fuelSettings.pricePerGallon !== null && fuelSettings.pricePerGallon !== undefined
-        ? String(fuelSettings.pricePerGallon)
+      fuelSettings.pricePerLitre !== null && fuelSettings.pricePerLitre !== undefined
+        ? String(fuelSettings.pricePerLitre)
         : "";
   }
   if (fuelInputs.currency) {
@@ -267,12 +274,12 @@ function formatDurationValue(seconds) {
   };
 }
 
-function formatGallonsValue(gallons) {
-  if (!Number.isFinite(gallons) || gallons <= 0) {
+function formatLitresValue(litres) {
+  if (!Number.isFinite(litres) || litres <= 0) {
     return null;
   }
-  const text = gallons >= 100 ? gallons.toFixed(0) : gallons >= 10 ? gallons.toFixed(1) : gallons.toFixed(2);
-  return `${text} gal`;
+  const text = litres >= 100 ? litres.toFixed(0) : litres >= 10 ? litres.toFixed(1) : litres.toFixed(2);
+  return `${text} L`;
 }
 
 function formatCurrencyValue(amount, symbol) {
@@ -300,20 +307,21 @@ function computeRouteSummary(route) {
   const duration = formatDurationValue(totalSeconds);
 
   const hasEfficiency = Number.isFinite(fuelSettings.efficiencyMpg) && fuelSettings.efficiencyMpg > 0;
-  const hasPrice = Number.isFinite(fuelSettings.pricePerGallon) && fuelSettings.pricePerGallon > 0;
+  const hasPrice = Number.isFinite(fuelSettings.pricePerLitre) && fuelSettings.pricePerLitre > 0;
 
-  let gallons = null;
+  let litres = null;
   if (hasEfficiency) {
     const miles = distance?.miles ?? totalMeters * 0.000621371;
-    gallons = miles / fuelSettings.efficiencyMpg;
+    const gallons = miles / fuelSettings.efficiencyMpg;
+    litres = gallons * LITRES_PER_GALLON;
   }
-  if (gallons !== null && (!Number.isFinite(gallons) || gallons <= 0)) {
-    gallons = null;
+  if (litres !== null && (!Number.isFinite(litres) || litres <= 0)) {
+    litres = null;
   }
 
   let cost = null;
-  if (hasPrice && gallons !== null) {
-    cost = gallons * fuelSettings.pricePerGallon;
+  if (hasPrice && litres !== null) {
+    cost = litres * fuelSettings.pricePerLitre;
   }
   if (cost !== null && (!Number.isFinite(cost) || cost <= 0)) {
     cost = null;
@@ -323,13 +331,13 @@ function computeRouteSummary(route) {
   if (!hasEfficiency) {
     note = "Add your vehicle's fuel efficiency to estimate fuel usage.";
   } else if (!hasPrice) {
-    note = "Add a fuel price to estimate trip cost.";
+    note = "Add a fuel price per litre to estimate trip cost.";
   }
 
   return {
     distance,
     duration,
-    gallons,
+    litres,
     cost,
     note,
   };
@@ -370,12 +378,12 @@ function renderRouteSummary(summary) {
     list.append(dt, dd);
   }
 
-  const gallonsText = formatGallonsValue(summary.gallons);
-  if (gallonsText) {
+  const litresText = formatLitresValue(summary.litres);
+  if (litresText) {
     const dt = document.createElement("dt");
     dt.textContent = "Fuel needed";
     const dd = document.createElement("dd");
-    dd.textContent = gallonsText;
+    dd.textContent = litresText;
     list.append(dt, dd);
   }
 
@@ -422,7 +430,7 @@ function refreshRouteSummary() {
 
 function handleFuelSettingsInputChange() {
   fuelSettings.efficiencyMpg = parsePositiveNumber(fuelInputs.efficiency?.value);
-  fuelSettings.pricePerGallon = parsePositiveNumber(fuelInputs.price?.value);
+  fuelSettings.pricePerLitre = parsePositiveNumber(fuelInputs.price?.value);
   const symbol = sanitiseCurrencySymbol(fuelInputs.currency?.value ?? defaultCurrencySymbol);
   fuelSettings.currencySymbol = symbol || defaultCurrencySymbol;
   persistFuelSettings();
