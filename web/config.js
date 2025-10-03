@@ -1,5 +1,5 @@
 (function () {
-  const placeholderKey = AIzaSyCEjHTmqVn-72tx1XHcDatsLIRBW8Xeamw;
+  const placeholderKey = "AIzaSyCEjHTmqVn-72tx1XHcDatsLIRBW8Xeamw";
   const configuredKey =
     typeof window.GMAPS_API_KEY === "string" ? window.GMAPS_API_KEY.trim() : "";
 
