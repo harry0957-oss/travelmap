@@ -14,6 +14,10 @@ const customVehicleIcons = {
   west: null,
 };
 const vehicleIconStorageKey = "travelmap.customVehicleIcons.v1";
+const previousTripsStorageKey = "travelmap.previousTrips.v1";
+
+let previousTrips = [];
+const maxStoredTrips = 10;
 
 let currentRouteResult = null;
 let currentRouteSegments = [];
@@ -191,6 +195,247 @@ function gatherWaypointValues() {
   return Array.from(document.querySelectorAll(`.${waypointClass}`))
     .map((input) => input.value.trim())
     .filter(Boolean);
+}
+
+function setWaypointValues(values = []) {
+  const container = document.getElementById("waypointsContainer");
+  if (!container) return;
+
+  container.innerHTML = "";
+  const entries = Array.isArray(values) && values.length ? values : [""];
+
+  entries.forEach((value) => {
+    const row = createWaypointRow(value);
+    container.append(row);
+  });
+}
+
+function formatTripLabel(trip) {
+  const stops = Array.isArray(trip.waypoints) ? trip.waypoints.length : 0;
+  const stopsPart = stops
+    ? `${stops} stop${stops === 1 ? "" : "s"}`
+    : "Direct";
+  const tollsPart = trip.avoidTolls ? " • Avoid tolls" : "";
+  return `${trip.start} → ${trip.end} (${stopsPart})${tollsPart}`;
+}
+
+function createTripKey(trip) {
+  const waypoints = Array.isArray(trip.waypoints) ? trip.waypoints.join("|") : "";
+  return [trip.start, trip.end, waypoints, trip.avoidTolls ? "1" : "0"].join("::");
+}
+
+function loadStoredPreviousTrips() {
+  if (!window?.localStorage) {
+    return [];
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(previousTripsStorageKey);
+    if (!storedValue) {
+      return [];
+    }
+
+    const parsed = JSON.parse(storedValue);
+    const trips = parsed?.trips;
+    if (!Array.isArray(trips)) {
+      return [];
+    }
+
+    return trips
+      .map((trip) => {
+        const start = typeof trip.start === "string" ? trip.start.trim() : "";
+        const end = typeof trip.end === "string" ? trip.end.trim() : "";
+        if (!start || !end) {
+          return null;
+        }
+        return {
+          id:
+            typeof trip.id === "string"
+              ? trip.id
+              : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          start,
+          end,
+          waypoints: Array.isArray(trip.waypoints)
+            ? trip.waypoints.map((wp) => (typeof wp === "string" ? wp.trim() : "")).filter(Boolean)
+            : [],
+          avoidTolls: Boolean(trip.avoidTolls),
+          savedAt: typeof trip.savedAt === "string" ? trip.savedAt : new Date().toISOString(),
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    console.warn("Unable to load previous trips", error);
+    return [];
+  }
+}
+
+function persistPreviousTrips() {
+  if (!window?.localStorage) {
+    return;
+  }
+
+  try {
+    const serialisableTrips = previousTrips.map((trip) => ({
+      id: trip.id,
+      start: trip.start,
+      end: trip.end,
+      waypoints: trip.waypoints,
+      avoidTolls: trip.avoidTolls,
+      savedAt: trip.savedAt,
+    }));
+    window.localStorage.setItem(
+      previousTripsStorageKey,
+      JSON.stringify({ version: 1, trips: serialisableTrips })
+    );
+  } catch (error) {
+    console.warn("Unable to persist previous trips", error);
+  }
+}
+
+function populatePreviousTripsSelect() {
+  const select = document.getElementById("previousTripsSelect");
+  if (!select) {
+    return;
+  }
+
+  const previousValue = select.value;
+  select.innerHTML = "";
+
+  if (!previousTrips.length) {
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "No saved trips yet";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.append(placeholder);
+  } else {
+    previousTrips.forEach((trip) => {
+      const option = document.createElement("option");
+      option.value = trip.id;
+      option.textContent = formatTripLabel(trip);
+      select.append(option);
+    });
+    const hasPrevious = previousTrips.some((trip) => trip.id === previousValue);
+    select.value = hasPrevious ? previousValue : previousTrips[0].id;
+  }
+
+  updatePreviousTripControls();
+}
+
+function getSelectedPreviousTripId() {
+  const select = document.getElementById("previousTripsSelect");
+  if (!select || select.disabled) {
+    return null;
+  }
+  const value = select.value;
+  return previousTrips.some((trip) => trip.id === value) ? value : null;
+}
+
+function getSelectedPreviousTrip() {
+  const id = getSelectedPreviousTripId();
+  if (!id) {
+    return null;
+  }
+  return previousTrips.find((trip) => trip.id === id) ?? null;
+}
+
+function updatePreviousTripControls() {
+  const select = document.getElementById("previousTripsSelect");
+  const loadButton = document.getElementById("loadTripButton");
+  const hasTrips = previousTrips.length > 0;
+
+  if (select) {
+    select.disabled = !hasTrips;
+    if (!hasTrips) {
+      select.value = "";
+    }
+  }
+
+  if (loadButton) {
+    loadButton.disabled = !getSelectedPreviousTrip();
+  }
+}
+
+function recordPreviousTrip({ start, end, waypoints = [], avoidTolls = false }) {
+  const trimmedStart = typeof start === "string" ? start.trim() : "";
+  const trimmedEnd = typeof end === "string" ? end.trim() : "";
+  if (!trimmedStart || !trimmedEnd) {
+    return;
+  }
+
+  const cleanedWaypoints = Array.isArray(waypoints)
+    ? waypoints.map((wp) => (typeof wp === "string" ? wp.trim() : "")).filter(Boolean)
+    : [];
+
+  const newTrip = {
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    start: trimmedStart,
+    end: trimmedEnd,
+    waypoints: cleanedWaypoints,
+    avoidTolls: Boolean(avoidTolls),
+    savedAt: new Date().toISOString(),
+  };
+
+  const newKey = createTripKey(newTrip);
+  previousTrips = previousTrips.filter((trip) => createTripKey(trip) !== newKey);
+  previousTrips.unshift(newTrip);
+
+  if (previousTrips.length > maxStoredTrips) {
+    previousTrips = previousTrips.slice(0, maxStoredTrips);
+  }
+
+  persistPreviousTrips();
+  populatePreviousTripsSelect();
+}
+
+function applyTripToForm(trip) {
+  const startInput = document.getElementById("startInput");
+  const endInput = document.getElementById("endInput");
+  const avoidTollsToggle = document.getElementById("avoidTollsToggle");
+
+  if (startInput) {
+    startInput.value = trip.start;
+  }
+  if (endInput) {
+    endInput.value = trip.end;
+  }
+  if (avoidTollsToggle) {
+    avoidTollsToggle.checked = Boolean(trip.avoidTolls);
+  }
+
+  setWaypointValues(trip.waypoints);
+}
+
+function loadSelectedPreviousTrip() {
+  const trip = getSelectedPreviousTrip();
+  if (!trip) {
+    return false;
+  }
+
+  applyTripToForm(trip);
+  plotRoute(trip.start, trip.end, trip.waypoints, { avoidTolls: trip.avoidTolls });
+  return true;
+}
+
+function initialisePreviousTrips() {
+  previousTrips = loadStoredPreviousTrips();
+  populatePreviousTripsSelect();
+
+  const select = document.getElementById("previousTripsSelect");
+  const loadButton = document.getElementById("loadTripButton");
+
+  select?.addEventListener("change", updatePreviousTripControls);
+  select?.addEventListener("input", updatePreviousTripControls);
+
+  loadButton?.addEventListener("click", () => {
+    if (!loadSelectedPreviousTrip()) {
+      setStatus("Select a saved trip to load.", "error");
+    }
+  });
+
+  select?.addEventListener("dblclick", () => {
+    void loadSelectedPreviousTrip();
+  });
 }
 
 async function openRecorderPopup(routePayload) {
@@ -580,7 +825,7 @@ async function openRecorderPopup(routePayload) {
   return win;
 }
 
-function plotRoute(start, end, waypointValues) {
+function plotRoute(start, end, waypointValues, options = {}) {
   if (!mapReady) {
     setStatus("The map is still loading. Please try again shortly.", "info");
     return;
@@ -599,6 +844,8 @@ function plotRoute(start, end, waypointValues) {
     });
   }
 
+  const avoidTolls = options?.avoidTolls ?? false;
+
   const request = {
     origin: start,
     destination: end,
@@ -606,6 +853,7 @@ function plotRoute(start, end, waypointValues) {
     waypoints: waypointValues.map((value) => ({ location: value, stopover: true })),
     optimizeWaypoints: false,
     provideRouteAlternatives: false,
+    avoidTolls,
   };
 
   setStatus("Calculating route…", "info");
@@ -615,6 +863,7 @@ function plotRoute(start, end, waypointValues) {
     .then((result) => {
       directionsRenderer.setDirections(result);
       updateRouteSegments(result);
+      recordPreviousTrip({ start, end, waypoints: waypointValues, avoidTolls });
       setStatus("Route updated successfully.", "success");
     })
     .catch((error) => {
@@ -670,6 +919,7 @@ function initialiseForm() {
   const form = document.getElementById("routeForm");
   const addWaypointButton = document.getElementById("addWaypointButton");
   const waypointsContainer = document.getElementById("waypointsContainer");
+  const avoidTollsToggle = document.getElementById("avoidTollsToggle");
 
   if (!form || !addWaypointButton || !waypointsContainer) return;
 
@@ -686,8 +936,9 @@ function initialiseForm() {
     const start = document.getElementById("startInput")?.value.trim() ?? "";
     const end = document.getElementById("endInput")?.value.trim() ?? "";
     const waypointValues = gatherWaypointValues();
+    const avoidTolls = avoidTollsToggle?.checked ?? false;
 
-    plotRoute(start, end, waypointValues);
+    plotRoute(start, end, waypointValues, { avoidTolls });
   });
 }
 
@@ -1599,6 +1850,7 @@ function startApplication() {
   console.info(`Travel Map Planner version: ${version}`);
 
   initialiseForm();
+  initialisePreviousTrips();
   initialiseVehicleIconUploads();
   initialiseAnimationControls();
   initialiseKeyboardShortcuts();
