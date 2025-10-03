@@ -7,6 +7,9 @@ from typing import Any, Dict, Iterable, List, Optional
 import json
 
 
+LITRES_PER_GALLON = 3.785411784
+
+
 @dataclass
 class Waypoint:
     """A single waypoint in the itinerary."""
@@ -15,7 +18,7 @@ class Waypoint:
     latitude: float
     longitude: float
     pause_seconds: float = 0.0
-    fuel_price_per_gallon: Optional[float] = None
+    fuel_price_per_litre: Optional[float] = None
 
     @staticmethod
     def from_mapping(data: Dict[str, Any]) -> "Waypoint":
@@ -26,13 +29,24 @@ class Waypoint:
         except KeyError as exc:  # pragma: no cover - defensive branch
             raise ValueError(f"Waypoint configuration missing field: {exc.args[0]}") from exc
         pause = float(data.get("pause", data.get("pause_seconds", 0.0)))
-        fuel_price = data.get("fuel_price_per_gallon", data.get("fuel_price"))
+        fuel_price = None
+        if "fuel_price_per_litre" in data:
+            fuel_price = data["fuel_price_per_litre"]
+        elif "fuel_price_per_liter" in data:
+            fuel_price = data["fuel_price_per_liter"]
+        elif "fuel_price_per_gallon" in data:
+            fuel_price = float(data["fuel_price_per_gallon"]) / LITRES_PER_GALLON
+        elif "fuel_price" in data:
+            base_price = float(data["fuel_price"])
+            fuel_price = base_price / LITRES_PER_GALLON
+        if fuel_price is not None:
+            fuel_price = float(fuel_price)
         return Waypoint(
             name=name,
             latitude=latitude,
             longitude=longitude,
             pause_seconds=pause,
-            fuel_price_per_gallon=float(fuel_price) if fuel_price is not None else None,
+            fuel_price_per_litre=fuel_price,
         )
 
 
@@ -44,7 +58,7 @@ class VehicleConfig:
     icon_path: Optional[Path] = None
     icon_scale: float = 1.0
     fuel_efficiency_mpg: Optional[float] = None
-    fuel_price_per_gallon: Optional[float] = None
+    fuel_price_per_litre: Optional[float] = None
 
     @staticmethod
     def from_mapping(data: Optional[Dict[str, Any]]) -> "VehicleConfig":
@@ -60,10 +74,14 @@ class VehicleConfig:
                 if "fuel_efficiency_mpg" in data
                 else float(data["mpg"]) if "mpg" in data else None
             ),
-            fuel_price_per_gallon=(
-                float(data["fuel_price_per_gallon"])
+            fuel_price_per_litre=(
+                float(data["fuel_price_per_litre"])
+                if "fuel_price_per_litre" in data
+                else float(data["fuel_price_per_liter"])
+                if "fuel_price_per_liter" in data
+                else float(data["fuel_price_per_gallon"]) / LITRES_PER_GALLON
                 if "fuel_price_per_gallon" in data
-                else float(data["fuel_price"])
+                else float(data["fuel_price"]) / LITRES_PER_GALLON
                 if "fuel_price" in data
                 else None
             ),

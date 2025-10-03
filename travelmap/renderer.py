@@ -22,6 +22,7 @@ from .map_shapes import iter_shapes
 
 Coordinate = Tuple[float, float]
 MILES_PER_KM = 0.621371
+LITRES_PER_GALLON = 3.785411784
 
 
 @dataclass
@@ -38,7 +39,7 @@ class LegSummary:
     start_name: str
     end_name: str
     distance_miles: float
-    fuel_price_per_gallon: Optional[float]
+    fuel_price_per_litre: Optional[float]
     fuel_cost: Optional[float]
 
 
@@ -174,18 +175,19 @@ class TravelMapAnimator:
         total_cost = 0.0
         cost_available = False
         mpg = self.config.vehicle.fuel_efficiency_mpg
-        default_price = self.config.vehicle.fuel_price_per_gallon
+        default_price = self.config.vehicle.fuel_price_per_litre
 
         for start, end in zip(waypoints[:-1], waypoints[1:]):
             distance_km = haversine_km((start.latitude, start.longitude), (end.latitude, end.longitude))
             distance_miles = distance_km * MILES_PER_KM
             total_distance += distance_miles
 
-            price = start.fuel_price_per_gallon if start.fuel_price_per_gallon is not None else default_price
+            price = start.fuel_price_per_litre if start.fuel_price_per_litre is not None else default_price
             fuel_cost: Optional[float] = None
             if mpg and mpg > 0 and price is not None:
                 gallons_needed = distance_miles / mpg
-                fuel_cost = gallons_needed * price
+                litres_needed = gallons_needed * LITRES_PER_GALLON
+                fuel_cost = litres_needed * price
                 total_cost += fuel_cost
                 cost_available = True
 
@@ -194,7 +196,7 @@ class TravelMapAnimator:
                     start_name=start.name,
                     end_name=end.name,
                     distance_miles=distance_miles,
-                    fuel_price_per_gallon=price,
+                    fuel_price_per_litre=price,
                     fuel_cost=fuel_cost,
                 )
             )
@@ -211,12 +213,12 @@ class TravelMapAnimator:
             if leg.fuel_cost is not None:
                 line += f" | est. cost {self.config.currency_symbol}{leg.fuel_cost:.2f}"
             elif (
-                leg.fuel_price_per_gallon is not None
+                leg.fuel_price_per_litre is not None
                 and self.config.vehicle.fuel_efficiency_mpg
                 and self.config.vehicle.fuel_efficiency_mpg > 0
             ):
                 line += (
-                    f" | price {self.config.currency_symbol}{leg.fuel_price_per_gallon:.2f}/gal"
+                    f" | price {self.config.currency_symbol}{leg.fuel_price_per_litre:.2f}/L"
                 )
             lines.append(line)
 
