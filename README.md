@@ -10,6 +10,7 @@ This project provides a Python-based command line tool that converts an itinerar
 - Stylised world backdrop with text labels for capitals inside the current viewport.
 - Animated vehicle with heading-aware rotation plus green “next leg” guide and a red trail history.
 - Fallback placeholder icons automatically generated when custom artwork is not supplied.
+- Automatic per-leg mileage calculations with an end-of-trip summary that estimates fuel costs when efficiency and local prices are supplied.
 
 ## Requirements
 
@@ -56,8 +57,13 @@ A lightweight web interface is bundled in the [`web/`](web/) directory. Serve th
 | `vehicle.type` | string | Vehicle category (`car`, `van`, `bus`, `campervan`, `train`, `plane`, `pedestrian`). |
 | `vehicle.icon` | string | Optional path to a custom PNG icon. Icons are rotated to match the current bearing. |
 | `vehicle.icon_scale` | number | Relative scaling factor applied to the icon. |
+| `vehicle.mpg` / `vehicle.fuel_efficiency_mpg` | number | Optional vehicle efficiency in miles-per-gallon used for fuel estimates. |
+| `vehicle.fuel_price` / `vehicle.fuel_price_per_gallon` | number | Optional default fuel price per gallon for the itinerary. |
 | `waypoints` | list | Ordered list of stop dictionaries containing `name`, `lat`, `lon` and optional `pause` seconds. |
+| `waypoints[].fuel_price` / `waypoints[].fuel_price_per_gallon` | number | Optional override fuel price for legs that depart from the waypoint. |
 | `output` | string | MP4 path to write (parent directories are created automatically). |
+| `currency_symbol` | string | Optional currency symbol used when displaying estimated fuel costs (default `$`). |
+| `summary_display_seconds` | number | Duration in seconds to display the end-of-trip mileage and fuel summary (default `2.0`). |
 
 ### Custom icons
 

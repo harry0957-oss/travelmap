@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import imageio.v2 as imageio
 import matplotlib
@@ -21,6 +21,7 @@ from .icons import load_vehicle_icon, rotate_icon
 from .map_shapes import iter_shapes
 
 Coordinate = Tuple[float, float]
+MILES_PER_KM = 0.621371
 
 
 @dataclass
@@ -29,6 +30,16 @@ class FrameState:
     traveled: List[Coordinate]
     upcoming: List[Coordinate]
     bearing: float
+    show_summary: bool = False
+
+
+@dataclass
+class LegSummary:
+    start_name: str
+    end_name: str
+    distance_miles: float
+    fuel_price_per_gallon: Optional[float]
+    fuel_cost: Optional[float]
 
 
 class TravelMapAnimator:
@@ -38,6 +49,10 @@ class TravelMapAnimator:
         self.config = config
         self._capitals: List[Capital] = load_capitals()
         self._vehicle_icon = load_vehicle_icon(config.vehicle)
+        self._leg_summaries, self._total_distance_miles, self._total_fuel_cost = self._compute_leg_summaries(
+            config.waypoints
+        )
+        self._summary_text_content = self._format_summary_text()
         self._frame_states = self._build_frames(config.waypoints)
         self._setup_canvas()
 
@@ -131,11 +146,91 @@ class TravelMapAnimator:
                     )
                 )
 
+        summary_frames = int(round(max(self.config.summary_display_seconds, 0.0) * fps))
+        if frames and summary_frames > 0:
+            final_state = frames[-1]
+            for _ in range(summary_frames):
+                frames.append(
+                    FrameState(
+                        position=final_state.position,
+                        traveled=list(final_state.traveled),
+                        upcoming=[],
+                        bearing=final_state.bearing,
+                        show_summary=True,
+                    )
+                )
+
         return frames
 
     # ------------------------------------------------------------------
     # Rendering helpers
     # ------------------------------------------------------------------
+
+    def _compute_leg_summaries(
+        self, waypoints: Sequence[Waypoint]
+    ) -> Tuple[List[LegSummary], float, Optional[float]]:
+        leg_summaries: List[LegSummary] = []
+        total_distance = 0.0
+        total_cost = 0.0
+        cost_available = False
+        mpg = self.config.vehicle.fuel_efficiency_mpg
+        default_price = self.config.vehicle.fuel_price_per_gallon
+
+        for start, end in zip(waypoints[:-1], waypoints[1:]):
+            distance_km = haversine_km((start.latitude, start.longitude), (end.latitude, end.longitude))
+            distance_miles = distance_km * MILES_PER_KM
+            total_distance += distance_miles
+
+            price = start.fuel_price_per_gallon if start.fuel_price_per_gallon is not None else default_price
+            fuel_cost: Optional[float] = None
+            if mpg and mpg > 0 and price is not None:
+                gallons_needed = distance_miles / mpg
+                fuel_cost = gallons_needed * price
+                total_cost += fuel_cost
+                cost_available = True
+
+            leg_summaries.append(
+                LegSummary(
+                    start_name=start.name,
+                    end_name=end.name,
+                    distance_miles=distance_miles,
+                    fuel_price_per_gallon=price,
+                    fuel_cost=fuel_cost,
+                )
+            )
+
+        return leg_summaries, total_distance, total_cost if cost_available else None
+
+    def _format_summary_text(self) -> str:
+        if not self._leg_summaries:
+            return ""
+
+        lines = ["Trip Summary"]
+        for index, leg in enumerate(self._leg_summaries, start=1):
+            line = f"{index}. {leg.start_name} → {leg.end_name}: {leg.distance_miles:.1f} mi"
+            if leg.fuel_cost is not None:
+                line += f" | est. cost {self.config.currency_symbol}{leg.fuel_cost:.2f}"
+            elif (
+                leg.fuel_price_per_gallon is not None
+                and self.config.vehicle.fuel_efficiency_mpg
+                and self.config.vehicle.fuel_efficiency_mpg > 0
+            ):
+                line += (
+                    f" | price {self.config.currency_symbol}{leg.fuel_price_per_gallon:.2f}/gal"
+                )
+            lines.append(line)
+
+        lines.append(f"Total distance: {self._total_distance_miles:.1f} mi")
+        if self._total_fuel_cost is not None:
+            lines.append(
+                f"Estimated fuel cost: {self.config.currency_symbol}{self._total_fuel_cost:.2f}"
+            )
+
+        mpg = self.config.vehicle.fuel_efficiency_mpg
+        if mpg:
+            lines.append(f"Vehicle efficiency: {mpg:.1f} mpg")
+
+        return "\n".join(lines)
 
     def _setup_canvas(self) -> None:
         dpi = 100
@@ -205,6 +300,19 @@ class TravelMapAnimator:
         )
         self._ax.add_artist(self._vehicle_artist)
 
+        self._summary_text = self._ax.text(
+            0.02,
+            0.02,
+            self._summary_text_content,
+            transform=self._ax.transAxes,
+            color="#ffffff",
+            fontsize=10,
+            ha="left",
+            va="bottom",
+            bbox=dict(facecolor="#000000", alpha=0.7, boxstyle="round,pad=0.5"),
+            visible=False,
+        )
+
         self._ax.set_xlim(self._lon_min, self._lon_max)
         self._ax.set_ylim(self._lat_min, self._lat_max)
 
@@ -243,6 +351,12 @@ class TravelMapAnimator:
         rotated_icon = rotate_icon(self._vehicle_icon, frame.bearing)
         self._vehicle_image_box.set_data(rotated_icon)
         self._vehicle_artist.xy = (frame.position[1], frame.position[0])
+
+        if frame.show_summary and self._summary_text_content:
+            self._summary_text.set_text(self._summary_text_content)
+            self._summary_text.set_visible(True)
+        else:
+            self._summary_text.set_visible(False)
 
     # ------------------------------------------------------------------
     # Public API

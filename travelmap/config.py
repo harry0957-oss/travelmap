@@ -15,6 +15,7 @@ class Waypoint:
     latitude: float
     longitude: float
     pause_seconds: float = 0.0
+    fuel_price_per_gallon: Optional[float] = None
 
     @staticmethod
     def from_mapping(data: Dict[str, Any]) -> "Waypoint":
@@ -25,7 +26,14 @@ class Waypoint:
         except KeyError as exc:  # pragma: no cover - defensive branch
             raise ValueError(f"Waypoint configuration missing field: {exc.args[0]}") from exc
         pause = float(data.get("pause", data.get("pause_seconds", 0.0)))
-        return Waypoint(name=name, latitude=latitude, longitude=longitude, pause_seconds=pause)
+        fuel_price = data.get("fuel_price_per_gallon", data.get("fuel_price"))
+        return Waypoint(
+            name=name,
+            latitude=latitude,
+            longitude=longitude,
+            pause_seconds=pause,
+            fuel_price_per_gallon=float(fuel_price) if fuel_price is not None else None,
+        )
 
 
 @dataclass
@@ -35,6 +43,8 @@ class VehicleConfig:
     type: str = "car"
     icon_path: Optional[Path] = None
     icon_scale: float = 1.0
+    fuel_efficiency_mpg: Optional[float] = None
+    fuel_price_per_gallon: Optional[float] = None
 
     @staticmethod
     def from_mapping(data: Optional[Dict[str, Any]]) -> "VehicleConfig":
@@ -45,6 +55,18 @@ class VehicleConfig:
             type=data.get("type", "car"),
             icon_path=Path(icon_path) if icon_path else None,
             icon_scale=float(data.get("icon_scale", 1.0)),
+            fuel_efficiency_mpg=(
+                float(data["fuel_efficiency_mpg"])
+                if "fuel_efficiency_mpg" in data
+                else float(data["mpg"]) if "mpg" in data else None
+            ),
+            fuel_price_per_gallon=(
+                float(data["fuel_price_per_gallon"])
+                if "fuel_price_per_gallon" in data
+                else float(data["fuel_price"])
+                if "fuel_price" in data
+                else None
+            ),
         )
 
 
@@ -65,6 +87,8 @@ class AnimationConfig:
     show_capitals: bool = True
     pause_at_start: float = 0.0
     pause_at_end: float = 1.0
+    currency_symbol: str = "$"
+    summary_display_seconds: float = 2.0
 
     @staticmethod
     def from_mapping(data: Dict[str, Any]) -> "AnimationConfig":
@@ -92,6 +116,8 @@ class AnimationConfig:
             show_capitals=bool(data.get("show_capitals", True)),
             pause_at_start=float(data.get("pause_at_start", 0.0)),
             pause_at_end=float(data.get("pause_at_end", 1.0)),
+            currency_symbol=str(data.get("currency_symbol", data.get("currency", "$"))),
+            summary_display_seconds=float(data.get("summary_display_seconds", 2.0)),
         )
 
 
