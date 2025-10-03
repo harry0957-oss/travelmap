@@ -13,6 +13,7 @@ const customVehicleIcons = {
   south: null,
   west: null,
 };
+const vehicleIconStorageKey = "travelmap.customVehicleIcons.v1";
 
 let currentRouteResult = null;
 let currentRouteSegments = [];
@@ -691,6 +692,7 @@ function initialiseForm() {
 }
 
 function initialiseVehicleIconUploads() {
+  restoreStoredVehicleIcons();
   directionOrder.forEach((direction) => {
     updateVehicleIconPreview(direction);
   });
@@ -713,6 +715,7 @@ function handleVehicleIconUpload(direction, file) {
     .then((image) => resizeVehicleImage(image))
     .then((dataUrl) => {
       customVehicleIcons[direction] = dataUrl;
+      persistCustomVehicleIcons();
       updateVehicleIconPreview(direction);
       if (animationState?.currentDirection === direction && vehicleMarker) {
         updateVehicleMarkerIcon(direction, animationState.motionOffsets);
@@ -767,6 +770,61 @@ function updateVehicleIconPreview(direction) {
   if (!preview) return;
   const icon = customVehicleIcons[direction] ?? defaultVehicleIcons[direction];
   preview.src = icon;
+}
+
+function persistCustomVehicleIcons() {
+  if (!window?.localStorage) {
+    return;
+  }
+
+  try {
+    const iconsToStore = directionOrder.reduce((accumulator, direction) => {
+      const icon = customVehicleIcons[direction];
+      if (typeof icon === "string" && icon.startsWith("data:image")) {
+        accumulator[direction] = icon;
+      }
+      return accumulator;
+    }, {});
+
+    if (Object.keys(iconsToStore).length) {
+      window.localStorage.setItem(
+        vehicleIconStorageKey,
+        JSON.stringify({ version: 1, icons: iconsToStore })
+      );
+    } else {
+      window.localStorage.removeItem(vehicleIconStorageKey);
+    }
+  } catch (error) {
+    console.warn("Unable to persist custom vehicle icons", error);
+  }
+}
+
+function restoreStoredVehicleIcons() {
+  if (!window?.localStorage) {
+    return;
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(vehicleIconStorageKey);
+    if (!storedValue) {
+      return;
+    }
+
+    const parsed = JSON.parse(storedValue);
+    const storedIcons = parsed?.icons ?? {};
+    if (!storedIcons || typeof storedIcons !== "object") {
+      return;
+    }
+
+    directionOrder.forEach((direction) => {
+      const icon = storedIcons[direction];
+      if (typeof icon === "string" && icon.startsWith("data:image")) {
+        customVehicleIcons[direction] = icon;
+      }
+    });
+  } catch (error) {
+    console.warn("Unable to restore stored vehicle icons", error);
+  }
 }
 
 function initialiseAnimationControls() {
