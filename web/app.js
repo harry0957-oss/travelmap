@@ -3,6 +3,10 @@ let directionsService;
 let directionsRenderer;
 let mapReady = false;
 
+const mapTileWaiters = new Set();
+let mapTilesExpectingRefresh = false;
+let lastTilesLoadedTime = 0;
+
 const waypointClass = "waypoint-input";
 const desiredIconSize = { width: 128, height: 64 };
 const directionOrder = ["north", "east", "south", "west"];
@@ -15,6 +19,11 @@ const customVehicleIcons = {
 };
 const vehicleIconStorageKey = "travelmap.customVehicleIcons.v1";
 const previousTripsStorageKey = "travelmap.previousTrips.v1";
+const fuelSettingsStorageKey = "travelmap.fuelSettings.v1";
+
+const defaultCurrencySymbol = "$";
+const routeSummaryPlaceholderText =
+  "Plot a route to see the distance, duration and estimated fuel usage for your journey.";
 
 let previousTrips = [];
 const maxStoredTrips = 10;
@@ -26,11 +35,24 @@ let animationState = null;
 let isRecordingInProgress = false;
 let mapTypePreference = "roadmap";
 let recordingOverlayElement = null;
+let routeSummaryElement = null;
 const animationControls = {
   enableCheckbox: null,
   previewButton: null,
   downloadButton: null,
   speedSelect: null,
+};
+
+const fuelSettings = {
+  efficiencyMpg: null,
+  pricePerGallon: null,
+  currencySymbol: defaultCurrencySymbol,
+};
+
+const fuelInputs = {
+  efficiency: null,
+  price: null,
+  currency: null,
 };
 
 const baseAnimationSpeed = 65;
@@ -60,6 +82,368 @@ function setStatus(message, type = "info") {
   } else {
     delete statusEl.dataset.type;
   }
+}
+
+function markMapTilesForRefresh() {
+  mapTilesExpectingRefresh = true;
+}
+
+function resolveMapTileWaiters() {
+  const waiters = Array.from(mapTileWaiters);
+  mapTileWaiters.clear();
+  waiters.forEach((waiter) => {
+    try {
+      waiter();
+    } catch (error) {
+      console.error("Map tile waiter failed", error);
+    }
+  });
+}
+
+function handleMapTilesLoaded() {
+  lastTilesLoadedTime = Date.now();
+  mapTilesExpectingRefresh = false;
+  resolveMapTileWaiters();
+}
+
+function waitForMapTiles({ timeoutMs = 4000, minDelayMs = 0 } = {}) {
+  if (!mapReady || !map) {
+    return Promise.resolve();
+  }
+
+  const start = Date.now();
+  if (!mapTilesExpectingRefresh) {
+    if (lastTilesLoadedTime === 0) {
+      return Promise.resolve();
+    }
+    if (minDelayMs > 0) {
+      return new Promise((resolve) => {
+        window.setTimeout(resolve, minDelayMs);
+      });
+    }
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const waiter = () => {
+      mapTileWaiters.delete(waiter);
+      const elapsed = Date.now() - start;
+      if (minDelayMs > 0 && elapsed < minDelayMs) {
+        window.setTimeout(resolve, minDelayMs - elapsed);
+      } else {
+        resolve();
+      }
+    };
+
+    mapTileWaiters.add(waiter);
+
+    if (timeoutMs > 0) {
+      window.setTimeout(() => {
+        if (mapTileWaiters.has(waiter)) {
+          waiter();
+        }
+      }, timeoutMs);
+    }
+  });
+}
+
+function parsePositiveNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const number = Number.parseFloat(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    return null;
+  }
+  return number;
+}
+
+function sanitiseCurrencySymbol(value) {
+  if (typeof value !== "string") {
+    return defaultCurrencySymbol;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return defaultCurrencySymbol;
+  }
+  return trimmed.slice(0, 3);
+}
+
+function loadStoredFuelSettings() {
+  if (!window?.localStorage) {
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(fuelSettingsStorageKey);
+    if (!raw) {
+      return;
+    }
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") {
+      return;
+    }
+    fuelSettings.efficiencyMpg = parsePositiveNumber(data.efficiencyMpg);
+    fuelSettings.pricePerGallon = parsePositiveNumber(data.pricePerGallon);
+    const symbol = sanitiseCurrencySymbol(data.currencySymbol);
+    fuelSettings.currencySymbol = symbol || defaultCurrencySymbol;
+  } catch (error) {
+    console.warn("Unable to load stored fuel settings", error);
+  }
+}
+
+function persistFuelSettings() {
+  if (!window?.localStorage) {
+    return;
+  }
+  try {
+    const payload = {
+      efficiencyMpg: fuelSettings.efficiencyMpg,
+      pricePerGallon: fuelSettings.pricePerGallon,
+      currencySymbol: fuelSettings.currencySymbol,
+    };
+    window.localStorage.setItem(fuelSettingsStorageKey, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Unable to store fuel settings", error);
+  }
+}
+
+function applyFuelSettingsToInputs() {
+  if (fuelInputs.efficiency) {
+    fuelInputs.efficiency.value =
+      fuelSettings.efficiencyMpg !== null && fuelSettings.efficiencyMpg !== undefined
+        ? String(fuelSettings.efficiencyMpg)
+        : "";
+  }
+  if (fuelInputs.price) {
+    fuelInputs.price.value =
+      fuelSettings.pricePerGallon !== null && fuelSettings.pricePerGallon !== undefined
+        ? String(fuelSettings.pricePerGallon)
+        : "";
+  }
+  if (fuelInputs.currency) {
+    fuelInputs.currency.value = fuelSettings.currencySymbol ?? defaultCurrencySymbol;
+  }
+}
+
+function formatDistanceValue(meters) {
+  if (!Number.isFinite(meters) || meters <= 0) {
+    return null;
+  }
+  const miles = meters * 0.000621371;
+  const kilometres = meters / 1000;
+  const milesText = miles >= 100 ? miles.toFixed(0) : miles >= 10 ? miles.toFixed(1) : miles.toFixed(2);
+  const kmText = kilometres >= 100 ? kilometres.toFixed(0) : kilometres >= 10 ? kilometres.toFixed(1) : kilometres.toFixed(2);
+  return {
+    meters,
+    miles,
+    kilometres,
+    text: `${milesText} mi (${kmText} km)`,
+  };
+}
+
+function formatDurationValue(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return null;
+  }
+  const totalSeconds = Math.round(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  const parts = [];
+  if (hours > 0) {
+    parts.push(`${hours} hr${hours === 1 ? "" : "s"}`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes} min${minutes === 1 ? "" : "s"}`);
+  }
+  if (parts.length === 0) {
+    parts.push(`${secs} sec${secs === 1 ? "" : "s"}`);
+  } else if (hours === 0 && minutes < 5 && secs > 0) {
+    parts.push(`${secs} sec${secs === 1 ? "" : "s"}`);
+  }
+  return {
+    seconds: totalSeconds,
+    text: parts.join(" "),
+  };
+}
+
+function formatGallonsValue(gallons) {
+  if (!Number.isFinite(gallons) || gallons <= 0) {
+    return null;
+  }
+  const text = gallons >= 100 ? gallons.toFixed(0) : gallons >= 10 ? gallons.toFixed(1) : gallons.toFixed(2);
+  return `${text} gal`;
+}
+
+function formatCurrencyValue(amount, symbol) {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+  const trimmed = typeof symbol === "string" && symbol.trim() ? symbol.trim() : defaultCurrencySymbol;
+  const separator = trimmed.length > 1 ? " " : "";
+  return `${trimmed}${separator}${amount.toFixed(2)}`;
+}
+
+function computeRouteSummary(route) {
+  if (!route) {
+    return null;
+  }
+  const legs = route.legs ?? [];
+  let totalMeters = 0;
+  let totalSeconds = 0;
+  legs.forEach((leg) => {
+    totalMeters += leg?.distance?.value ?? 0;
+    totalSeconds += leg?.duration?.value ?? 0;
+  });
+
+  const distance = formatDistanceValue(totalMeters);
+  const duration = formatDurationValue(totalSeconds);
+
+  const hasEfficiency = Number.isFinite(fuelSettings.efficiencyMpg) && fuelSettings.efficiencyMpg > 0;
+  const hasPrice = Number.isFinite(fuelSettings.pricePerGallon) && fuelSettings.pricePerGallon > 0;
+
+  let gallons = null;
+  if (hasEfficiency) {
+    const miles = distance?.miles ?? totalMeters * 0.000621371;
+    gallons = miles / fuelSettings.efficiencyMpg;
+  }
+  if (gallons !== null && (!Number.isFinite(gallons) || gallons <= 0)) {
+    gallons = null;
+  }
+
+  let cost = null;
+  if (hasPrice && gallons !== null) {
+    cost = gallons * fuelSettings.pricePerGallon;
+  }
+  if (cost !== null && (!Number.isFinite(cost) || cost <= 0)) {
+    cost = null;
+  }
+
+  let note = null;
+  if (!hasEfficiency) {
+    note = "Add your vehicle's fuel efficiency to estimate fuel usage.";
+  } else if (!hasPrice) {
+    note = "Add a fuel price to estimate trip cost.";
+  }
+
+  return {
+    distance,
+    duration,
+    gallons,
+    cost,
+    note,
+  };
+}
+
+function renderRouteSummary(summary) {
+  if (!routeSummaryElement) {
+    routeSummaryElement = document.getElementById("routeSummary");
+  }
+  const container = routeSummaryElement;
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = "";
+
+  if (!summary) {
+    const placeholder = document.createElement("p");
+    placeholder.className = "placeholder";
+    placeholder.textContent = routeSummaryPlaceholderText;
+    container.append(placeholder);
+    return;
+  }
+
+  const list = document.createElement("dl");
+  if (summary.distance?.text) {
+    const dt = document.createElement("dt");
+    dt.textContent = "Total distance";
+    const dd = document.createElement("dd");
+    dd.textContent = summary.distance.text;
+    list.append(dt, dd);
+  }
+  if (summary.duration?.text) {
+    const dt = document.createElement("dt");
+    dt.textContent = "Estimated drive time";
+    const dd = document.createElement("dd");
+    dd.textContent = summary.duration.text;
+    list.append(dt, dd);
+  }
+
+  const gallonsText = formatGallonsValue(summary.gallons);
+  if (gallonsText) {
+    const dt = document.createElement("dt");
+    dt.textContent = "Fuel needed";
+    const dd = document.createElement("dd");
+    dd.textContent = gallonsText;
+    list.append(dt, dd);
+  }
+
+  const costText = formatCurrencyValue(summary.cost, fuelSettings.currencySymbol);
+  if (costText) {
+    const dt = document.createElement("dt");
+    dt.textContent = "Estimated fuel cost";
+    const dd = document.createElement("dd");
+    dd.textContent = costText;
+    list.append(dt, dd);
+  }
+
+  if (list.children.length > 0) {
+    container.append(list);
+  }
+
+  if (summary.note) {
+    const note = document.createElement("p");
+    note.className = "note";
+    note.textContent = summary.note;
+    container.append(note);
+  }
+
+  if (container.children.length === 0) {
+    const placeholder = document.createElement("p");
+    placeholder.className = "placeholder";
+    placeholder.textContent = routeSummaryPlaceholderText;
+    container.append(placeholder);
+  }
+}
+
+function refreshRouteSummary() {
+  if (!routeSummaryElement) {
+    routeSummaryElement = document.getElementById("routeSummary");
+  }
+  if (!routeSummaryElement) {
+    return;
+  }
+
+  const route = currentRouteResult?.routes?.[0] ?? null;
+  const summary = computeRouteSummary(route);
+  renderRouteSummary(summary);
+}
+
+function handleFuelSettingsInputChange() {
+  fuelSettings.efficiencyMpg = parsePositiveNumber(fuelInputs.efficiency?.value);
+  fuelSettings.pricePerGallon = parsePositiveNumber(fuelInputs.price?.value);
+  const symbol = sanitiseCurrencySymbol(fuelInputs.currency?.value ?? defaultCurrencySymbol);
+  fuelSettings.currencySymbol = symbol || defaultCurrencySymbol;
+  persistFuelSettings();
+  refreshRouteSummary();
+}
+
+function initialiseFuelSettings() {
+  fuelInputs.efficiency = document.getElementById("fuelEfficiencyInput");
+  fuelInputs.price = document.getElementById("fuelPriceInput");
+  fuelInputs.currency = document.getElementById("currencySymbolInput");
+  routeSummaryElement = document.getElementById("routeSummary");
+
+  loadStoredFuelSettings();
+  applyFuelSettingsToInputs();
+  refreshRouteSummary();
+
+  [fuelInputs.efficiency, fuelInputs.price, fuelInputs.currency].forEach((input) => {
+    if (!input) return;
+    input.addEventListener("input", handleFuelSettingsInputChange);
+    input.addEventListener("change", handleFuelSettingsInputChange);
+  });
 }
 
 function getBrowserBrandNames() {
@@ -861,6 +1245,7 @@ function plotRoute(start, end, waypointValues, options = {}) {
   directionsService
     .route(request)
     .then((result) => {
+      markMapTilesForRefresh();
       directionsRenderer.setDirections(result);
       updateRouteSegments(result);
       recordPreviousTrip({ start, end, waypoints: waypointValues, avoidTolls });
@@ -882,12 +1267,14 @@ function updateRouteSegments(result) {
   if (!route) {
     currentRouteSegments = [];
     updateAnimationButtons();
+    refreshRouteSummary();
     return;
   }
 
   const path = extractRoutePath(route);
   currentRouteSegments = buildRouteSegments(path);
   updateAnimationButtons();
+  refreshRouteSummary();
 }
 
 function extractRoutePath(route) {
@@ -1172,6 +1559,7 @@ function initialiseMapTypeControl() {
   mapTypeSelect.addEventListener("change", () => {
     mapTypePreference = mapTypeSelect.value;
     if (mapReady && map) {
+      markMapTilesForRefresh();
       map.setMapTypeId(mapTypePreference);
     }
   });
@@ -1217,7 +1605,7 @@ async function startRouteAnimation({ record = false } = {}) {
     return;
   }
 
-  const firstSegment = currentRouteSegments[0];
+  let firstSegment = currentRouteSegments[0];
   if (!firstSegment) {
     setStatus("The calculated route is too short to animate.", "error");
     return;
@@ -1225,6 +1613,25 @@ async function startRouteAnimation({ record = false } = {}) {
 
   if (animationState) {
     finalizeAnimation({ shouldSaveRecording: false });
+  }
+
+  setStatus(record ? "Preparing map for recording…" : "Preparing map for animation…", "info");
+  await waitForMapTiles({ timeoutMs: 5000, minDelayMs: 300 });
+
+  if (!animationControls.enableCheckbox?.checked) {
+    setStatus("Animation is disabled.", "info");
+    return;
+  }
+
+  if (!currentRouteSegments.length) {
+    setStatus("Plot a route before starting the animation.", "error");
+    return;
+  }
+
+  firstSegment = currentRouteSegments[0];
+  if (!firstSegment) {
+    setStatus("The calculated route is too short to animate.", "error");
+    return;
   }
 
   const initialDirection = determineDirection(firstSegment.heading);
@@ -1852,6 +2259,7 @@ function startApplication() {
   initialiseForm();
   initialisePreviousTrips();
   initialiseVehicleIconUploads();
+  initialiseFuelSettings();
   initialiseAnimationControls();
   initialiseKeyboardShortcuts();
   initialiseMapTypeControl();
@@ -1879,6 +2287,9 @@ window.initMap = function initMap() {
     streetViewControl: false,
     fullscreenControl: true,
   });
+
+  map.addListener("tilesloaded", handleMapTilesLoaded);
+  markMapTilesForRefresh();
 
   directionsService = new google.maps.DirectionsService();
   directionsRenderer = new google.maps.DirectionsRenderer({

@@ -75,6 +75,41 @@
             </div>
             <p class="hint">Prefer routes without toll charges when available.</p>
           </div>
+          <div class="field fuel-settings">
+            <h3>Fuel estimates</h3>
+            <p class="hint">
+              Provide your vehicle's efficiency and local fuel price to estimate usage and costs for
+              the trip.
+            </p>
+            <div class="fuel-grid">
+              <label for="fuelEfficiencyInput">
+                <span>Fuel efficiency (mpg)</span>
+                <input
+                  type="number"
+                  id="fuelEfficiencyInput"
+                  min="0"
+                  step="0.1"
+                  placeholder="e.g. 28"
+                  inputmode="decimal"
+                />
+              </label>
+              <label for="fuelPriceInput">
+                <span>Fuel price per gallon</span>
+                <input
+                  type="number"
+                  id="fuelPriceInput"
+                  min="0"
+                  step="0.01"
+                  placeholder="e.g. 4.25"
+                  inputmode="decimal"
+                />
+              </label>
+              <label for="currencySymbolInput">
+                <span>Currency symbol</span>
+                <input type="text" id="currencySymbolInput" maxlength="3" placeholder="$" />
+              </label>
+            </div>
+          </div>
           <div class="field">
             <h3>Vehicle icons</h3>
             <p class="hint">
@@ -150,6 +185,14 @@
           </select>
         </div>
         <div id="map" role="region" aria-label="Route map"></div>
+        <div class="field route-summary-field">
+          <h3>Route details</h3>
+          <div id="routeSummary" class="route-summary" role="status" aria-live="polite">
+            <p class="placeholder">
+              Plot a route to see the distance, duration and estimated fuel usage for your journey.
+            </p>
+          </div>
+        </div>
       </section>
     </main>
     <script>
