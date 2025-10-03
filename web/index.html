@@ -38,6 +38,16 @@
         <form id="routeForm" class="panel" autocomplete="off">
           <h2>Route configuration</h2>
           <div class="field">
+            <div class="field-header">
+              <label for="previousTripsSelect">Previous trips</label>
+              <button type="button" id="loadTripButton" class="secondary" disabled>Load trip</button>
+            </div>
+            <select id="previousTripsSelect" aria-label="Previously saved trips">
+              <option value="" disabled selected>Loading saved trips…</option>
+            </select>
+            <p class="hint">Select a saved trip to reload it with its route options.</p>
+          </div>
+          <div class="field">
             <label for="startInput">Start location</label>
             <input
               type="text"
@@ -57,6 +67,13 @@
           <div class="field">
             <label for="endInput">End location</label>
             <input type="text" id="endInput" placeholder="e.g. Los Angeles, CA" required />
+          </div>
+          <div class="field">
+            <div class="field-header">
+              <label for="avoidTollsToggle">Avoid toll roads</label>
+              <input type="checkbox" id="avoidTollsToggle" />
+            </div>
+            <p class="hint">Prefer routes without toll charges when available.</p>
           </div>
           <div class="field">
             <h3>Vehicle icons</h3>

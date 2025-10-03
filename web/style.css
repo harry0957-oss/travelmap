@@ -97,6 +97,11 @@ main {
   color: inherit;
 }
 
+.field select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .field-header {
   display: flex;
   align-items: center;
@@ -127,6 +132,14 @@ button {
   background: rgba(83, 169, 255, 0.85);
   color: #07111b;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+  box-shadow: none;
+  transform: none;
 }
 
 button:hover,
