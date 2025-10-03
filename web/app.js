@@ -1532,7 +1532,7 @@ async function bootstrapGoogleMaps() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+function startApplication() {
   const versionElement = document.getElementById("appVersion");
   const version = window.APP_VERSION ?? "dev-build";
   if (versionElement) {
@@ -1547,7 +1547,13 @@ document.addEventListener("DOMContentLoaded", () => {
   initialiseMapTypeControl();
 
   void bootstrapGoogleMaps();
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", startApplication, { once: true });
+} else {
+  startApplication();
+}
 
 window.initMap = function initMap() {
   const mapElement = document.getElementById("map");
